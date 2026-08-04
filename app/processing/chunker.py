@@ -7,14 +7,6 @@ def clean_text(text):
     text = text.strip()
     return text
 
-sample_text = """
-    Hello      World!
-
-    This     is      LifeOS.
-"""
-
-cleaned_text = clean_text(sample_text)
-
 # print(cleaned_text)
 
 def chunk_text(text):
@@ -75,18 +67,3 @@ def chunk_text(text):
 # for i, chunk in enumerate(chunks, start=1):
 #     print(f"\nChunk {i} ({len(chunk)} chars)")
 #     print(chunk[-80:])   # Print the last 80 chars to verify words aren't cut.
-
-
-from ingestion.reader import read_documents
-
-text = read_documents("data/documents/Summer_Internship_Schedule.pdf")
-
-cleaned_text = clean_text(text)
-
-chunks = chunk_text(cleaned_text)
-
-print(f"Total Chunks: {len(chunks)}")
-
-for i, chunk in enumerate(chunks, 1):
-    print(f"\n--- Chunk {i} ---\n")
-    print(chunk)
