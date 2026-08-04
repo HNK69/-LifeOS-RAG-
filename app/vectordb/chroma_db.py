@@ -10,7 +10,7 @@ def store_embeddings(chunks,embeddings):
 
     ids = [f"doc_{i}" for i in range(len(chunks))]
 
-    collection.add(
+    collection.upsert(
         ids = ids,
         documents = chunks,
         embeddings = embeddings.tolist()

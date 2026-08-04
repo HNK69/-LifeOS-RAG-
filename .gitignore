@@ -1,4 +1,20 @@
-__pycache__/
+# Virtual Environment
 .venv/
+
+# Python
+__pycache__/
+*.pyc
+
+# Environment Variables
 .env
-.vscode
+
+# Chroma Database
+chroma_db/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
