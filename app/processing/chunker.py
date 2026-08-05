@@ -2,8 +2,8 @@ import re
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 def clean_text(text):
-
-    text=re.sub(r"\s+"," ",text )
+    text = re.sub(r"[ \t]+", " ", text)      # collapse spaces/tabs
+    text = re.sub(r"\n{3,}", "\n\n", text)   # preserve paragraphs
     text = text.strip()
     return text
 
@@ -11,14 +11,18 @@ def clean_text(text):
 
 def chunk_text(text):
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500,
-        chunk_overlap=100,
+        chunk_size=350,
+        chunk_overlap=50,
         separators=[
-            "\n\n",
-            "\n",
-            ". ",
+            "\n\n",   # paragraph
+            "\n",     # line
+            ". ",     # sentence
+            "; ",     # semicolon
+            ", ",     # comma
+            " ",      # word
             ""
-        ]
+        ],
+        keep_separator=True,
     )
     return splitter.split_text(text)
 

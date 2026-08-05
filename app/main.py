@@ -12,6 +12,9 @@ from embeddings.embedder import generate_embeddings
 from vectordb.chroma_db import store_embeddings
 from retrieval.retriever import retrieve
 from prompting.prompt_builder import build_prompt
+from llm.generator import generate_response
+
+
 
 def main():
     text = read_documents("data/documents/Summer_Internship_Schedule.pdf")
@@ -23,7 +26,10 @@ def main():
     results = retrieve(query)
     retrieved_chunks = results["documents"][0]
     prompt = build_prompt(query,retrieved_chunks)
-    print(prompt)
+    # print(prompt)
+    response = generate_response(prompt)
+    print("\nAnswer:\n")
+    print(response)
 
     # print(len(chunks))
     # print(len(cleaned_text))
