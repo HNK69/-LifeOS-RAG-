@@ -10,7 +10,8 @@ from ingestion.reader import read_documents
 from processing.chunker import clean_text,chunk_text
 from embeddings.embedder import generate_embeddings
 from vectordb.chroma_db import store_embeddings
-
+from retrieval.retriever import retrieve
+from prompting.prompt_builder import build_prompt
 
 def main():
     text = read_documents("data/documents/Summer_Internship_Schedule.pdf")
@@ -32,4 +33,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # main()
+    query = 'what is explanibility?'
+    results = retrieve(query)
+    print(results["documents"][0])

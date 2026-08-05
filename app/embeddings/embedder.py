@@ -11,17 +11,17 @@ def generate_embeddings(chunks):
 
     return embeddings
 
-if __name__ == "__main__":
+# if __name__ == "__main__":
 
-    chunks = [
-        "LifeOS is my personal AI operating system.",
-        "RAG retrieves relevant context before answering."
-    ]
+#     chunks = [
+#         "LifeOS is my personal AI operating system.",
+#         "RAG retrieves relevant context before answering."
+#     ]
 
-    embeddings = generate_embeddings(chunks)
+#     embeddings = generate_embeddings(chunks)
 
 
-    print(f"Total Embeddings: {len(embeddings)}")
-    print(f"Embedding Dimension: {len(embeddings[0])}")
-    print("\nFirst 10 Values:")
-    print(embeddings[0][:10])
+#     print(f"Total Embeddings: {len(embeddings)}")
+#     print(f"Embedding Dimension: {len(embeddings[0])}")
+#     print("\nFirst 10 Values:")
+#     print(embeddings[0])
