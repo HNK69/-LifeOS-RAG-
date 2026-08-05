@@ -19,12 +19,14 @@ def main():
     chunks = chunk_text(cleaned_text)
     embeddings = generate_embeddings(chunks)
     store_embeddings(chunks,embeddings)
-    query = "What is explainability?"
+    query = "What is YOLO?"
     results = retrieve(query)
     retrieved_chunks = results["documents"][0]
     prompt = build_prompt(query,retrieved_chunks)
     print(prompt)
 
+    # print(len(chunks))
+    # print(len(cleaned_text))
 
     # print(f"\nTotal Chunks: {len(chunks)}\n")
 
@@ -33,8 +35,6 @@ def main():
     #     print(f"Chunk {i}")
     #     print(f"{'='*60}")
     #     print(chunk)
-
-
 
 
 if __name__ == "__main__":

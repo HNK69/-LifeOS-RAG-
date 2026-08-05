@@ -31,8 +31,8 @@ def read_pdf(file_path):
     text=""
     for page in reader.pages:
         page_text=page.extract_text()   
-    if page_text:
-        text += page_text + "\n"
+        if page_text:
+            text += page_text + "\n"
     return text
 
 def read_docx(file_path):
