@@ -19,6 +19,11 @@ def main():
     chunks = chunk_text(cleaned_text)
     embeddings = generate_embeddings(chunks)
     store_embeddings(chunks,embeddings)
+    query = "What is explainability?"
+    results = retrieve(query)
+    retrieved_chunks = results["documents"][0]
+    prompt = build_prompt(query,retrieved_chunks)
+    print(prompt)
 
 
     # print(f"\nTotal Chunks: {len(chunks)}\n")
@@ -33,7 +38,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # main()
-    query = 'what is explanibility?'
-    results = retrieve(query)
-    print(results["documents"][0])
+    main()
