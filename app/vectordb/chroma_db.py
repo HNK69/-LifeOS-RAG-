@@ -1,4 +1,6 @@
 import chromadb
+from pathlib import Path
+
 
 client = chromadb.PersistentClient(path="chroma_db")
 
@@ -6,16 +8,26 @@ collection = client.get_or_create_collection(
     name="lifeos_documents"
 )
 
-def store_embeddings(chunks,embeddings):
+def store_embeddings(chunks,embeddings,file_path):
 
-    ids = [f"doc_{i}" for i in range(len(chunks))]
+    source = Path(file_path).stem
+
+    ids = [
+        f"{source}_chunk_{i}"
+        for i in range(len(chunks))
+    ]
 
     metadatas=[]
 
     for i in range (len(chunks)):
         metadatas.append({
             "chunk_id":i,
+            "source":source,
         })
+
+    # collection.delete(where={})
+    # client.delete_collection(name="documents")
+    # collection = client.create_collection(name="documents")
 
     collection.upsert(
         ids = ids,

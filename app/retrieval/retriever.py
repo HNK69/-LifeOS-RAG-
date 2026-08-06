@@ -7,6 +7,27 @@ def retrieve(query,top_k=3):
 
     results = collection.query(
         query_embeddings = [query_embedding.tolist()],    # Search ChromaDB.
-        n_results=top_k
+        n_results=top_k,
+        include=[
+            "documents",
+            "metadatas",
+            "distances"
+        ]
     )
-    return results
+    retrieved=[]
+
+    documents=results["documents"][0]
+    metadatas=results["metadatas"][0]
+    distances=results["distances"][0]
+
+    for doc, meta, dist in zip(documents, metadatas, distances):
+        retrieved.append({
+            "document": doc,
+            "source": meta["source"],
+            "chunk_id": meta["chunk_id"],
+            "distance": dist
+        })
+
+
+
+    return retrieved

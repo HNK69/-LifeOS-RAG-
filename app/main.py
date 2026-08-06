@@ -17,14 +17,16 @@ from llm.generator import generate_response
 
 
 def main():
-    text = read_documents("data/documents/Ml Course Schedule.docx")
+    file_path = "data/documents/Ml Course Schedule.docx"
+    text = read_documents(file_path)
     cleaned_text = clean_text(text)
     chunks = chunk_text(cleaned_text)
     embeddings = generate_embeddings(chunks)
-    store_embeddings(chunks,embeddings)
+    store_embeddings(chunks, embeddings, file_path)
     query = "When will I study RAG?"
     results = retrieve(query)
-    retrieved_chunks = results["documents"][0]
+    print(results)
+    retrieved_chunks = [item["document"] for item in results]
     # print(retrieved_chunks)
     prompt = build_prompt(query,retrieved_chunks)
     # print(prompt)

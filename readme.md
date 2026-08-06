@@ -8,38 +8,33 @@
 
 ## ***Goal***
 
-
-1. Document Ingestion
-        ↓
-2. Text Extraction
-        ↓
-3. Text Cleaning
-        ↓
-4. Chunking
-        ↓
-5. Embedding Generation
-        ↓
-6. Vector Database Storage
-        ↓
-7. User Query
-        ↓
-8. Query Embedding
-        ↓
-9. Similarity Search
-        ↓
-10. Context Retrieval
-        ↓
-11. Prompt Building
-        ↓
-12. LLM Response
-        ↓
-13. Return Answer + Sources
+Document
+    ↓
+Chunk
+    ↓
+Embedding
+    ↓
+ChromaDB (+ metadata)
+    ↓
+Query
+    ↓
+Retrieved Objects
+    ├── document
+    ├── source
+    ├── chunk_id
+    └── distance
+    ↓
+Prompt
+    ↓
+LLM
+    ↓
+Answer
 
 
 modification PLAN
 
 Phase 1 — Complete Core RAG
-□ Source Attribution
+□ Source Attribution#don
 □ Metadata (filename, page, chunk_id)
 □ Return sources with every answer
 
