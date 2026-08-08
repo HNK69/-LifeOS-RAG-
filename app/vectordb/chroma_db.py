@@ -1,8 +1,11 @@
 import chromadb
 from pathlib import Path
+from config import CHROMA_DIR
+import logging
 
+logger = logging.getLogger(__name__)
 
-client = chromadb.PersistentClient(path="chroma_db")
+client = chromadb.PersistentClient(path=str(CHROMA_DIR))
 
 collection = client.get_or_create_collection(
     name="lifeos_documents"
@@ -13,7 +16,7 @@ def store_embeddings(chunks,embeddings,file_path):
     source = Path(file_path).stem
 
     ids = [
-        f"{source}_chunk_{i}"
+        f"{Path(file_path).stem}_{i}"
         for i in range(len(chunks))
     ]
 
@@ -36,5 +39,4 @@ def store_embeddings(chunks,embeddings,file_path):
         embeddings = embeddings.tolist(),
         metadatas=metadatas
     )
-
-    print(f"Stored {len(chunks)} chunks in chromaDB.")
+    logger.info("Stored %d chunks in ChromaDB", len(chunks))

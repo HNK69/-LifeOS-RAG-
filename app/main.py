@@ -1,4 +1,3 @@
-
 """
 main.py
 
@@ -18,15 +17,6 @@ def main():
 
     results = retrieve(query)
 
-    print("\nRetrieval Ranking:")
-
-    for i, item in enumerate(results, start=1):
-        print(
-            f"{i}. {item['source']} | "
-            f"chunk={item['chunk_id']} | "
-            f"distance={item['distance']:.4f}"
-        )
-
     retrieved_chunks = [
         item["document"]
         for item in results
@@ -42,9 +32,21 @@ def main():
 
     print("\nSources:")
 
+    seen = set()
+
     for item in results:
-        print(f"- {item['source']}")
-        print(f"  {item['file_path']}")
+        source = item["source"]
+        file_path = str(item["file_path"]).replace("\\", "/")
+
+        key = (source.lower(), file_path.lower())
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+
+        print(f"- {source}")
+        print(f"  {file_path}")
 
 
 if __name__ == "__main__":

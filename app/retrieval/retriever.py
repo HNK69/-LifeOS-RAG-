@@ -43,15 +43,4 @@ def retrieve(query, top_k=3):
             "distance": dist
         })
 
-    for item in retrieved:
-        item["keyword_score"] = keyword_score(
-            query,
-            item["document"]
-        )
-
-    retrieved.sort(
-        key=lambda x: (x["keyword_score"], -x["distance"]),
-        reverse=True
-    )
-
     return retrieved
