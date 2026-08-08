@@ -17,15 +17,20 @@ from llm.generator import generate_response
 
 
 def main():
-    file_path = "data/documents/Ml Course Schedule.docx"
+    file_path = "data/documents/p2.docx"
     text = read_documents(file_path)
     cleaned_text = clean_text(text)
     chunks = chunk_text(cleaned_text)
     embeddings = generate_embeddings(chunks)
     store_embeddings(chunks, embeddings, file_path)
-    query = "When will I study RAG?"
+    query = "Find my Java program for implementing a stack."    
     results = retrieve(query)
-    print(results)
+    # print(results)
+
+    for items in results:
+        print(f"Found file: {items['source']}")
+        print(f"Path: {items['file_path']}")
+
     retrieved_chunks = [item["document"] for item in results]
     # print(retrieved_chunks)
     prompt = build_prompt(query,retrieved_chunks)

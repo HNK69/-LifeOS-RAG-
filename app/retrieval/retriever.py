@@ -24,6 +24,7 @@ def retrieve(query,top_k=3):
         retrieved.append({
             "document": doc,
             "source": meta["source"],
+            "file_path": meta["file_path"],
             "chunk_id": meta["chunk_id"],
             "distance": dist
         })

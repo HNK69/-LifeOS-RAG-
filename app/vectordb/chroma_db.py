@@ -21,8 +21,9 @@ def store_embeddings(chunks,embeddings,file_path):
 
     for i in range (len(chunks)):
         metadatas.append({
-            "chunk_id":i,
-            "source":source,
+            "chunk_id": i,
+            "source": Path(file_path).name,
+            "file_path": str(file_path),
         })
 
     # collection.delete(where={})
