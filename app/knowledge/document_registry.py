@@ -22,6 +22,7 @@ import json
 import sqlite3
 
 from config import BASE_DIR
+from knowledge.metadata import normalize_metadata
 
 
 REGISTRY_DB = BASE_DIR / "data" / "document_registry.db"
@@ -233,11 +234,15 @@ def mark_success(
     timestamp = datetime.now(
         timezone.utc
     ).isoformat()
+    
+    normalized_metadata = normalize_metadata(
+        metadata,
+        file_path,
+    )
 
-    metadata_json = (
-        json.dumps(metadata, ensure_ascii=False)
-        if metadata is not None
-        else None
+    metadata_json = json.dumps(
+        normalized_metadata,
+        ensure_ascii=False,
     )
 
     with _get_connection() as connection:

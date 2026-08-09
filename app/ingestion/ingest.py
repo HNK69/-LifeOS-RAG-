@@ -31,6 +31,7 @@ from processing.chunker import clean_text, chunk_text
 from embeddings.embedder import generate_embeddings
 
 from ingestion.structured.handler import handle_structured_file
+from knowledge.analyzer import analyze_document
 
 from vectordb.chroma_db import (
     store_embeddings,
@@ -213,10 +214,15 @@ def ingest_documents(
                     file_path
                 )
 
+                metadata = analyze_document(
+                    file_path,
+                    "\n".join(chunks),
+                )
+
                 mark_success(
                     file_path,
                     file_hash,
-                    chunk_count=0,
+                    len(chunks),
                     metadata=metadata,
                 )
 

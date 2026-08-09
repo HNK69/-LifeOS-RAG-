@@ -31,6 +31,9 @@ from typing import Any
 from pathlib import Path
 from llm.generator import classify_sources
 
+from retrieval.reranker import rerank
+
+
 from dotenv import load_dotenv
 from embeddings.embedder import generate_embeddings
 from vectordb.chroma_db import collection
@@ -440,10 +443,15 @@ def _file_discovery(query: str) -> QueryResult:
         #
         # Filename matches are deliberately weighted strongly
         # because this operation is FILE discovery, not Q&A.
+        semantic_score = 0.0
+
+        if distance != float("inf"):
+            semantic_score = 1 / (1 + distance)
+
         score = (
-            filename_overlap * 5.0
-            + content_overlap * 1.5
-            - distance
+            filename_overlap * 4.0
+            + content_overlap * 2.0
+            + semantic_score * 5.0
         )
 
         existing = candidates.get(file_path)
@@ -591,6 +599,11 @@ def _document_search(query: str) -> QueryResult:
     retrieved = retrieve_chunks(
         query,
         top_k=10,
+    )
+    
+    retrieved = rerank(
+        query,
+        retrieved,
     )
 
     return QueryResult(
