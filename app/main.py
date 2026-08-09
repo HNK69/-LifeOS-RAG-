@@ -5,20 +5,23 @@ LifeOS application entry point.
 
 Flow:
 
-    User query
-        ↓
-    LLM router
-        ↓
-    Deterministic tool
-        ↓
-    Response adapter
-        ↓
-    User-facing answer
+User query
+    ↓
+LLM router
+    ↓
+Deterministic tool
+    ↓
+Response adapter
+    ↓
+User-facing answer
 """
 
 from query.router import route_query
 from prompting.prompt_builder import build_prompt
 from llm.generator import generate_response
+
+
+LAST_RESULT = None
 
 
 def _format_file_results(result):
@@ -35,12 +38,8 @@ def _format_file_results(result):
         filename = file.get("filename", "Unknown file")
         path = str(file.get("path", "")).replace("\\", "/")
 
-        lines.append(
-            f"{index}. {filename}"
-        )
-        lines.append(
-            f"   Path: {path}"
-        )
+        lines.append(f"{index}. {filename}")
+        lines.append(f"   Path: {path}")
 
     return "\n".join(lines)
 
@@ -76,23 +75,20 @@ def _format_structured_result(result):
 
 
 def _format_schedule_result(result):
-    """
-    Give the LLM schedule context plus retrieved timetable
-    information so it can produce the actual answer.
-    """
+    """Answer schedule questions using retrieved documents."""
 
-    data = result.data
+    data = result.data or {}
 
-    documents = data.get(
-        "documents",
-        [],
-    )
+    documents = data.get("documents", [])
 
     retrieved_chunks = [
         item["document"]
         for item in documents
         if item.get("document")
     ]
+
+    if not retrieved_chunks:
+        return "I couldn't find a relevant schedule in your documents."
 
     prompt = build_prompt(
         result.query,
@@ -122,14 +118,35 @@ def _format_document_result(result):
     return generate_response(prompt)
 
 
+def _format_structured_files(result):
+    """Format dataset discovery results."""
+
+    files = result.data
+
+    if not files:
+        return "I couldn't find a matching dataset."
+
+    lines = ["I found these datasets:"]
+
+    for index, file in enumerate(files, start=1):
+        lines.append(
+            f"{index}. {file['filename']}"
+        )
+
+    return "\n".join(lines)
+
+
 def handle_query(query):
     """
     Main LifeOS query handler.
-
-    Returns a user-facing response.
     """
 
+    global LAST_RESULT
+
     result = route_query(query)
+
+    if result.answer_type != "unknown":
+        LAST_RESULT = result
 
     if result.answer_type == "files":
         return _format_file_results(result)
@@ -147,22 +164,11 @@ def handle_query(query):
         return _format_document_result(result)
 
     if result.answer_type == "structured_files":
-        files = result.data
+        return _format_structured_files(result)
 
-        if not files:
-            return "I couldn't find a matching dataset."
-
-        lines = ["I found these datasets:"]
-
-        for index, file in enumerate(
-            files,
-            start=1,
-        ):
-            lines.append(
-                f"{index}. {file['filename']}"
-            )
-
-        return "\n".join(lines)
+    # Follow-up query handling
+    if result.answer_type == "unknown" and LAST_RESULT:
+        return _format_document_result(LAST_RESULT)
 
     return (
         "I understood the request, but "

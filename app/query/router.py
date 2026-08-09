@@ -588,47 +588,19 @@ def _file_discovery(query: str) -> QueryResult:
 def _document_search(query: str) -> QueryResult:
     """Retrieve actual document chunks for document Q&A."""
 
-    query_embedding = generate_embeddings([query])[0]
-
-    results = collection.query(
-        query_embeddings=[query_embedding.tolist()],
-        n_results=5,
-        include=[
-            "documents",
-            "metadatas",
-            "distances",
-        ],
+    retrieved = retrieve_chunks(
+        query,
+        top_k=10,
     )
-
-    documents = results.get("documents", [[]])[0]
-    metadatas = results.get("metadatas", [[]])[0]
-    distances = results.get("distances", [[]])[0]
-
-    retrieved = []
-
-    for document, metadata, distance in zip(
-        documents,
-        metadatas,
-        distances,
-    ):
-        if not document:
-            continue
-
-        retrieved.append({
-            "document": document,
-            "source": metadata.get("source"),
-            "file_path": metadata.get("file_path"),
-            "chunk_id": metadata.get("chunk_id"),
-            "distance": distance,
-            "type": "chunk",
-        })
 
     return QueryResult(
         query=query,
         intent=QueryIntent(
             "document_search",
             1.0,
-            {"method": "semantic_chunks"},
+            {
+                "method": "semantic_chunks",
+            },
         ),
         answer_type="documents",
         data=retrieved,
