@@ -16,7 +16,7 @@ Response adapter
 User-facing answer
 """
 
-from query.router import route_query
+from intelligence.router import route_intelligent
 from prompting.prompt_builder import build_prompt
 from llm.generator import generate_response
 
@@ -143,7 +143,7 @@ def handle_query(query):
 
     global LAST_RESULT
 
-    result = route_query(query)
+    result = route_intelligent(query)
 
     if result.answer_type != "unknown":
 

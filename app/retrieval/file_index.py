@@ -98,10 +98,8 @@ def _tokenize(text):
 
 def find_file(query, documents_dir="data/documents"):
     """
-    Find the most relevant file using both filename and file content.
-
-    Filename matches receive higher weight because this function
-    is specifically for file discovery.
+    Find the most relevant file using filename/content evidence.
+    Requires at least one meaningful query-token match.
     """
 
     query_words = _tokenize(query)
@@ -113,47 +111,21 @@ def find_file(query, documents_dir="data/documents"):
     best_score = 0.0
 
     for file in get_file_index(documents_dir):
-
         path = Path(file["path"])
 
-        filename_words = _tokenize(
-            file["stem"]
-        )
+        filename_words = _tokenize(file["stem"])
+        content_words = _tokenize(_extract_text(path))
 
-        content = _extract_text(path)
-
-        content_words = _tokenize(content)
-
-        filename_matches = (
-            query_words & filename_words
-        )
-
-        content_matches = (
-            query_words & content_words
-        )
-
-        # Filename evidence is much stronger.
-        filename_score = (
-            len(filename_matches) * 5
-        )
-
-        # Content evidence allows files such as p2.docx
-        # to match "Java lab programs".
-        content_score = (
-            len(content_matches) * 1.5
-        )
+        filename_matches = query_words & filename_words
+        content_matches = query_words & content_words
 
         score = (
-            filename_score
-            + content_score
+            len(filename_matches) * 5
+            + len(content_matches) * 1.5
         )
 
         if score > best_score:
             best_score = score
             best_match = file
 
-    return (
-        best_match
-        if best_score > 0
-        else None
-    )
+    return best_match if best_score > 0 else None
