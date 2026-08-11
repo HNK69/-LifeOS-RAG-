@@ -18,3 +18,10 @@ chroma_db/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local databases
+*.db
+*.sqlite3
+
+# Backup files
+*.bak
