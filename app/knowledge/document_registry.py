@@ -477,3 +477,63 @@ def search_documents(search_term):
         ).fetchall()
 
     return [dict(row) for row in rows]
+
+def register_media(file_path, file_hash, media_metadata):
+    """Register a media file with lightweight metadata."""
+
+    path = Path(file_path).resolve()
+    signature = get_file_signature(path)
+
+    metadata_json = json.dumps(
+        media_metadata,
+        ensure_ascii=False,
+    )
+
+    with _get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO documents (
+                path,
+                filename,
+                extension,
+                modified_time,
+                file_hash,
+                ingestion_status,
+                chunk_count,
+                last_ingested_at,
+                error_message,
+                metadata_json,
+                file_size,
+                modified_time_ns
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+
+            ON CONFLICT(path) DO UPDATE SET
+                filename = excluded.filename,
+                extension = excluded.extension,
+                modified_time = excluded.modified_time,
+                file_hash = excluded.file_hash,
+                ingestion_status = excluded.ingestion_status,
+                last_ingested_at = excluded.last_ingested_at,
+                error_message = NULL,
+                metadata_json = excluded.metadata_json,
+                file_size = excluded.file_size,
+                modified_time_ns = excluded.modified_time_ns
+            """,
+            (
+                signature["path"],
+                signature["filename"],
+                signature["extension"],
+                signature["modified_time"],
+                file_hash,
+                "success",
+                0,
+                datetime.now(timezone.utc).isoformat(),
+                None,
+                metadata_json,
+                signature["file_size"],
+                signature["modified_time_ns"],
+            ),
+        )
+
+        connection.commit()

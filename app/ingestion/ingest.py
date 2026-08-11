@@ -14,7 +14,6 @@ Supports:
 7. Text/document embedding.
 8. Registry synchronization.
 """
-
 from pathlib import Path
 import logging
 
@@ -33,6 +32,11 @@ from vectordb.chroma_db import (
     delete_document,
 )
 
+from knowledge.media import (
+    is_media_file,
+    get_media_metadata,
+)
+
 from knowledge.document_registry import (
     initialize_registry,
     calculate_file_hash,
@@ -43,7 +47,9 @@ from knowledge.document_registry import (
     mark_success,
     mark_failed,
     remove_document,
+    register_media,
 )
+
 
 
 logger = logging.getLogger(__name__)
@@ -182,6 +188,7 @@ def _process_text_document(file_path, file_hash):
 
 
 def ingest_file(file_path):
+    file_path = Path(file_path).resolve()
     """
     Incrementally ingest ONE file.
 
@@ -229,6 +236,27 @@ def ingest_file(file_path):
             "Processing changed file: %s",
             path.name,
         )
+
+        if is_media_file(file_path):
+            media_metadata = get_media_metadata(file_path)
+            file_hash = calculate_file_hash(file_path)
+
+            if is_unchanged(file_path, file_hash):
+                return False
+
+            register_media(
+                file_path,
+                file_hash,
+                media_metadata,
+            )
+
+            logger.info(
+                "Media file registered: %s | type=%s",
+                file_path.name,
+                media_metadata["media_type"],
+            )
+
+            return True
 
         # -----------------------------------------------------
         # CLASSIFY
@@ -278,6 +306,30 @@ def ingest_file(file_path):
             )
 
             return False
+
+        if is_media_file(file_path):
+            logger.info(
+                "Registering media file: %s",
+                file_path.name,
+            )
+
+            media_metadata = get_media_metadata(
+                file_path
+            )
+
+            register_media(
+                file_path,
+                file_hash,
+                media_metadata,
+            )
+
+            logger.info(
+                "Media file registered: %s | type=%s",
+                file_path.name,
+                media_metadata["media_type"],
+            )
+
+            return True
 
         # -----------------------------------------------------
         # STRUCTURED DATA
