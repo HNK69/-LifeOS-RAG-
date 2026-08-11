@@ -3,17 +3,16 @@ ingest.py
 
 LifeOS incremental ingestion pipeline.
 
-Pipeline:
+Supports:
 
-1. Recursively discover supported files.
-2. Detect deleted files.
-3. Use cheap filesystem metadata to detect possible changes.
-4. Calculate SHA-256 only for new/changed files.
-5. Skip files whose content is actually unchanged.
-6. Route structured files to their specialized handler.
-7. Process text documents through:
-   read -> clean -> chunk -> embed -> ChromaDB
-8. Update the registry only after successful processing.
+1. Full/incremental directory synchronization.
+2. Targeted single-file ingestion.
+3. Targeted file deletion.
+4. Cheap metadata-based change detection.
+5. SHA-256 only for new/changed files.
+6. Structured-file handling.
+7. Text/document embedding.
+8. Registry synchronization.
 """
 
 from pathlib import Path
@@ -51,12 +50,7 @@ logger = logging.getLogger(__name__)
 
 
 def _discover_files(documents_dir):
-    """
-    Recursively discover supported files.
-
-    Returns:
-        dict[str, Path]
-    """
+    """Recursively discover supported files."""
 
     current_files = {}
 
@@ -76,9 +70,7 @@ def _discover_files(documents_dir):
 
 
 def _remove_deleted_files(current_files):
-    """
-    Remove registry and ChromaDB entries for files that no longer exist.
-    """
+    """Synchronize registry/ChromaDB with files deleted from disk."""
 
     registered_documents = get_all_documents()
 
@@ -99,12 +91,11 @@ def _remove_deleted_files(current_files):
         )
 
         try:
-
-            delete_document(registered_path)
-            remove_document(registered_path)
+            remove_file(
+                registered_path
+            )
 
         except Exception as error:
-
             logger.exception(
                 "Failed to remove deleted document %s: %s",
                 document["filename"],
@@ -113,11 +104,7 @@ def _remove_deleted_files(current_files):
 
 
 def _process_structured_file(file_path, file_hash):
-    """
-    Inspect a structured file and store its metadata in the registry.
-
-    Structured files are NOT embedded into ChromaDB.
-    """
+    """Process a structured file."""
 
     logger.info(
         "Processing structured file: %s",
@@ -147,11 +134,7 @@ def _process_structured_file(file_path, file_hash):
 
 
 def _process_text_document(file_path, file_hash):
-    """
-    Process a normal text/document file.
-
-    read -> clean -> chunk -> embed -> ChromaDB
-    """
+    """Process a normal text/document file."""
 
     mark_processing(
         file_path,
@@ -198,15 +181,236 @@ def _process_text_document(file_path, file_hash):
     )
 
 
+def ingest_file(file_path):
+    """
+    Incrementally ingest ONE file.
+
+    This is the hot path used by the filesystem watcher.
+
+    It does not scan the entire documents directory.
+    """
+
+    path = Path(
+        file_path
+    ).resolve()
+
+    if not path.exists() or not path.is_file():
+        logger.info(
+            "File no longer exists: %s",
+            path,
+        )
+        return False
+
+    if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+        logger.debug(
+            "Unsupported file type, skipping: %s",
+            path,
+        )
+        return False
+
+    initialize_registry()
+
+    try:
+
+        # -----------------------------------------------------
+        # CHEAP CHANGE CHECK
+        # -----------------------------------------------------
+
+        if not file_needs_processing(path):
+
+            logger.debug(
+                "Unchanged, skipping: %s",
+                path.name,
+            )
+
+            return False
+
+        logger.info(
+            "Processing changed file: %s",
+            path.name,
+        )
+
+        # -----------------------------------------------------
+        # CLASSIFY
+        # -----------------------------------------------------
+
+        file_info = classify_file(
+            path
+        )
+
+        logger.info(
+            "Classification: %s | type=%s | strategy=%s | size=%.2f MB",
+            path.name,
+            file_info["type"],
+            file_info["strategy"],
+            file_info["size_mb"],
+        )
+
+        if file_info["strategy"] == "unsupported":
+
+            logger.warning(
+                "Unsupported file type, skipping: %s",
+                path,
+            )
+
+            return False
+
+        # -----------------------------------------------------
+        # HASH ONLY THIS FILE
+        # -----------------------------------------------------
+
+        file_hash = calculate_file_hash(
+            path
+        )
+
+        # -----------------------------------------------------
+        # CONTENT DID NOT ACTUALLY CHANGE
+        # -----------------------------------------------------
+
+        if is_unchanged(
+            path,
+            file_hash,
+        ):
+
+            logger.info(
+                "Content unchanged, skipping: %s",
+                path.name,
+            )
+
+            return False
+
+        # -----------------------------------------------------
+        # STRUCTURED DATA
+        # -----------------------------------------------------
+
+        if file_info["type"] == "structured_data":
+
+            _process_structured_file(
+                path,
+                file_hash,
+            )
+
+            return True
+
+        # -----------------------------------------------------
+        # TEXT DOCUMENT
+        # -----------------------------------------------------
+
+        if file_info["type"] == "text_document":
+
+            _process_text_document(
+                path,
+                file_hash,
+            )
+
+            return True
+
+        logger.warning(
+            "No ingestion strategy implemented for: %s",
+            path,
+        )
+
+        return False
+
+    except FileNotFoundError:
+
+        logger.info(
+            "File disappeared during ingestion: %s",
+            path,
+        )
+
+        return False
+
+    except Exception as error:
+
+        logger.exception(
+            "Failed to ingest %s: %s",
+            path.name,
+            error,
+        )
+
+        try:
+
+            failed_hash = locals().get(
+                "file_hash",
+                "",
+            )
+
+            mark_failed(
+                path,
+                failed_hash,
+                error,
+            )
+
+        except Exception:
+
+            logger.exception(
+                "Failed to update registry for %s",
+                path.name,
+            )
+
+        return False
+
+
+def remove_file(file_path):
+    """
+    Remove ONE file from ChromaDB and the document registry.
+
+    Used by the filesystem watcher when a file disappears.
+    """
+
+    path = Path(
+        file_path
+    ).resolve()
+
+    logger.info(
+        "Removing document: %s",
+        path.name,
+    )
+
+    try:
+
+        delete_document(
+            path
+        )
+
+        remove_document(
+            path
+        )
+
+        logger.info(
+            "Document removed successfully: %s",
+            path.name,
+        )
+
+        return True
+
+    except Exception as error:
+
+        logger.exception(
+            "Failed to remove document %s: %s",
+            path.name,
+            error,
+        )
+
+        return False
+
+
 def ingest_documents(
     documents_dir=DOCUMENTS_DIR,
     include_csv=False,
 ):
     """
-    Incrementally ingest the LifeOS knowledge directory.
+    Full/incremental directory synchronization.
 
-    include_csv is retained for backwards compatibility.
-    Structured files are routed through their specialized handler.
+    This is used for:
+    - initial indexing
+    - manual reindexing
+    - recovery
+    - periodic consistency checks
+
+    Normal filesystem events should use ingest_file()
+    and remove_file() instead.
     """
 
     documents_dir = Path(
@@ -226,7 +430,7 @@ def ingest_documents(
     )
 
     # ---------------------------------------------------------
-    # 1. DISCOVER
+    # DISCOVER
     # ---------------------------------------------------------
 
     current_files = _discover_files(
@@ -239,7 +443,7 @@ def ingest_documents(
     )
 
     # ---------------------------------------------------------
-    # 2. DELETE SYNCHRONIZATION
+    # DELETE SYNCHRONIZATION
     # ---------------------------------------------------------
 
     _remove_deleted_files(
@@ -247,162 +451,14 @@ def ingest_documents(
     )
 
     # ---------------------------------------------------------
-    # 3. PROCESS NEW / CHANGED FILES
+    # PROCESS EACH NEW/CHANGED FILE
     # ---------------------------------------------------------
 
     for file_path in current_files.values():
 
-        try:
-
-            # -------------------------------------------------
-            # Cheap check first.
-            #
-            # This only checks filesystem metadata.
-            # No file contents are read.
-            # -------------------------------------------------
-
-            if not file_needs_processing(
-                file_path
-            ):
-
-                logger.debug(
-                    "Unchanged, skipping: %s",
-                    file_path.name,
-                )
-
-                continue
-
-            logger.info(
-                "New or potentially changed file: %s",
-                file_path.name,
-            )
-
-            # -------------------------------------------------
-            # Classify before expensive processing.
-            # -------------------------------------------------
-
-            file_info = classify_file(
-                file_path
-            )
-
-            logger.info(
-                "Classification: %s | type=%s | strategy=%s | size=%.2f MB",
-                file_path.name,
-                file_info["type"],
-                file_info["strategy"],
-                file_info["size_mb"],
-            )
-
-            if file_info["strategy"] == "unsupported":
-
-                logger.warning(
-                    "Unsupported file type, skipping: %s",
-                    file_path,
-                )
-
-                continue
-
-            # -------------------------------------------------
-            # SHA-256 is calculated ONLY when the cheap metadata
-            # check says the file is new or potentially changed.
-            # -------------------------------------------------
-
-            file_hash = calculate_file_hash(
-                file_path
-            )
-
-            # -------------------------------------------------
-            # Metadata may have changed while the content stayed
-            # identical. Avoid unnecessary re-embedding.
-            # -------------------------------------------------
-
-            if is_unchanged(
-                file_path,
-                file_hash,
-            ):
-
-                logger.info(
-                    "Content unchanged, skipping: %s",
-                    file_path.name,
-                )
-
-                continue
-
-            # -------------------------------------------------
-            # STRUCTURED DATA
-            # -------------------------------------------------
-
-            if file_info["type"] == "structured_data":
-
-                _process_structured_file(
-                    file_path,
-                    file_hash,
-                )
-
-                continue
-
-            # -------------------------------------------------
-            # TEXT DOCUMENT
-            # -------------------------------------------------
-
-            if file_info["type"] == "text_document":
-
-                _process_text_document(
-                    file_path,
-                    file_hash,
-                )
-
-                continue
-
-            # -------------------------------------------------
-            # SAFETY FALLBACK
-            # -------------------------------------------------
-
-            logger.warning(
-                "No ingestion strategy implemented for: %s",
-                file_path,
-            )
-
-        except FileNotFoundError:
-
-            # A file can disappear while the scanner is running.
-            logger.info(
-                "File disappeared during ingestion: %s",
-                file_path,
-            )
-
-            continue
-
-        except Exception as error:
-
-            logger.exception(
-                "Failed to ingest %s: %s",
-                file_path.name,
-                error,
-            )
-
-            try:
-
-                # file_hash may not exist if hashing failed.
-                # In that case calculate it is not useful, so use
-                # an empty marker for the failed registry record.
-                failed_hash = locals().get(
-                    "file_hash",
-                    "",
-                )
-
-                mark_failed(
-                    file_path,
-                    failed_hash,
-                    error,
-                )
-
-            except Exception:
-
-                logger.exception(
-                    "Failed to update registry for %s",
-                    file_path.name,
-                )
+        ingest_file(
+            file_path
+        )
 
     logger.info(
         "Incremental ingestion completed."

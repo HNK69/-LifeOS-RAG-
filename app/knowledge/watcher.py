@@ -9,7 +9,7 @@ Responsibilities:
 - Detect deleted files.
 - Wait for files to become stable.
 - Debounce bursts of filesystem events.
-- Run one incremental ingestion pass per burst.
+- Process ONLY affected files.
 """
 
 import logging
@@ -21,7 +21,12 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 from config import DOCUMENTS_DIR
-from ingestion.ingest import ingest_documents
+
+from ingestion.ingest import (
+    ingest_documents,
+    ingest_file,
+    remove_file,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -42,65 +47,6 @@ CHECK_INTERVAL_SECONDS = 0.25
 DEBOUNCE_SECONDS = 2.0
 
 
-def wait_for_file_stability(file_path):
-    """
-    Wait until a file exists, is non-empty, and its size remains
-    unchanged for STABILITY_SECONDS.
-    """
-
-    path = Path(file_path)
-
-    stable_since = None
-    previous_size = None
-
-    while True:
-
-        if not path.exists() or not path.is_file():
-            return False
-
-        try:
-            current_size = path.stat().st_size
-
-        except OSError:
-            time.sleep(
-                CHECK_INTERVAL_SECONDS
-            )
-            continue
-
-        if current_size == 0:
-
-            stable_since = None
-            previous_size = 0
-
-            time.sleep(
-                CHECK_INTERVAL_SECONDS
-            )
-
-            continue
-
-        if current_size != previous_size:
-
-            previous_size = current_size
-            stable_since = time.monotonic()
-
-            time.sleep(
-                CHECK_INTERVAL_SECONDS
-            )
-
-            continue
-
-        if (
-            stable_since is not None
-            and time.monotonic() - stable_since
-            >= STABILITY_SECONDS
-        ):
-            return True
-
-        time.sleep(
-            CHECK_INTERVAL_SECONDS
-        )
-
-
 class DocumentEventHandler(FileSystemEventHandler):
     """
     Collect filesystem events and debounce them.
@@ -113,7 +59,7 @@ class DocumentEventHandler(FileSystemEventHandler):
                     ↓
         debounce window
                     ↓
-        ONE ingestion pass
+        process only those 20 files
     """
 
     def __init__(self, documents_dir):
@@ -124,19 +70,92 @@ class DocumentEventHandler(FileSystemEventHandler):
             documents_dir
         ).resolve()
 
-        self._pending_paths = set()
+        self._pending_events = {}
 
         self._lock = threading.Lock()
 
         self._timer = None
 
     # --------------------------------------------------------
+    # FILE STABILITY
+    # --------------------------------------------------------
+
+    @staticmethod
+    def _wait_for_file_stability(file_path):
+
+        path = Path(
+            file_path
+        )
+
+        stable_since = None
+        previous_size = None
+
+        while True:
+
+            if not path.exists() or not path.is_file():
+                return False
+
+            try:
+
+                current_size = path.stat().st_size
+
+            except OSError:
+
+                time.sleep(
+                    CHECK_INTERVAL_SECONDS
+                )
+
+                continue
+
+            if current_size == 0:
+
+                stable_since = None
+                previous_size = 0
+
+                time.sleep(
+                    CHECK_INTERVAL_SECONDS
+                )
+
+                continue
+
+            if current_size != previous_size:
+
+                previous_size = current_size
+                stable_since = time.monotonic()
+
+                time.sleep(
+                    CHECK_INTERVAL_SECONDS
+                )
+
+                continue
+
+            if (
+                stable_since is not None
+                and (
+                    time.monotonic()
+                    - stable_since
+                ) >= STABILITY_SECONDS
+            ):
+
+                return True
+
+            time.sleep(
+                CHECK_INTERVAL_SECONDS
+            )
+
+    # --------------------------------------------------------
     # EVENT COLLECTION
     # --------------------------------------------------------
 
-    def _queue_event(self, event_type, file_path):
+    def _queue_event(
+        self,
+        event_type,
+        file_path,
+    ):
 
-        path = Path(file_path).resolve()
+        path = Path(
+            file_path
+        ).resolve()
 
         logger.info(
             "Filesystem change detected: %s: %s",
@@ -146,11 +165,31 @@ class DocumentEventHandler(FileSystemEventHandler):
 
         with self._lock:
 
-            self._pending_paths.add(
-                str(path)
+            existing_event = (
+                self._pending_events.get(
+                    str(path)
+                )
             )
 
+            # Preserve a deletion if it happens after a create
+            # or modification during the debounce window.
+            if (
+                existing_event == "deleted"
+                or event_type == "deleted"
+            ):
+
+                self._pending_events[
+                    str(path)
+                ] = "deleted"
+
+            else:
+
+                self._pending_events[
+                    str(path)
+                ] = event_type
+
             if self._timer is not None:
+
                 self._timer.cancel()
 
             self._timer = threading.Timer(
@@ -170,56 +209,78 @@ class DocumentEventHandler(FileSystemEventHandler):
 
         with self._lock:
 
-            paths = set(
-                self._pending_paths
+            events = dict(
+                self._pending_events
             )
 
-            self._pending_paths.clear()
+            self._pending_events.clear()
 
             self._timer = None
 
-        if not paths:
+        if not events:
             return
 
         logger.info(
-            "Processing %d filesystem changes",
-            len(paths),
+            "Processing %d affected files",
+            len(events),
         )
 
-        # Wait for newly created/modified files to finish writing.
-        for path_string in paths:
+        for path_string, event_type in events.items():
 
-            path = Path(path_string)
-
-            if not path.exists():
-                continue
-
-            if not path.is_file():
-                continue
-
-            wait_for_file_stability(
-                path
+            path = Path(
+                path_string
             )
 
-        self._run_ingestion()
+            try:
 
-    # --------------------------------------------------------
-    # INGESTION
-    # --------------------------------------------------------
+                # ------------------------------------------------
+                # DELETED
+                # ------------------------------------------------
 
-    def _run_ingestion(self):
+                if event_type == "deleted":
 
-        try:
+                    remove_file(
+                        path
+                    )
 
-            ingest_documents(
-                documents_dir=self.documents_dir
-            )
+                    continue
 
-        except Exception:
+                # ------------------------------------------------
+                # CREATED / MODIFIED / MOVED
+                # ------------------------------------------------
 
-            logger.exception(
-                "Automatic ingestion failed."
-            )
+                if (
+                    not path.exists()
+                    or not path.is_file()
+                ):
+
+                    continue
+
+                stable = (
+                    self._wait_for_file_stability(
+                        path
+                    )
+                )
+
+                if not stable:
+
+                    logger.warning(
+                        "File disappeared before becoming stable: %s",
+                        path,
+                    )
+
+                    continue
+
+                ingest_file(
+                    path
+                )
+
+            except Exception:
+
+                logger.exception(
+                    "Failed processing filesystem event for %s",
+                    path,
+                )
 
     # --------------------------------------------------------
     # WATCHDOG EVENTS
@@ -260,9 +321,20 @@ class DocumentEventHandler(FileSystemEventHandler):
         if event.is_directory:
             return
 
-        # The destination is what now exists.
+        # A move is represented as:
+        #
+        # old path → delete
+        # new path → create
+        #
+        # Both are handled inside the same debounce window.
+
         self._queue_event(
-            "moved",
+            "deleted",
+            event.src_path,
+        )
+
+        self._queue_event(
+            "created",
             event.dest_path,
         )
 
@@ -273,8 +345,8 @@ def start_watcher(
     """
     Start the LifeOS document watcher.
 
-    Performs one initial incremental ingestion and then
-    continuously watches the document directory.
+    Performs one initial incremental synchronization,
+    then switches to targeted filesystem processing.
     """
 
     documents_dir = Path(
