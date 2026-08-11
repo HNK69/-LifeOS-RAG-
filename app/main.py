@@ -15,8 +15,17 @@ Response adapter
     ↓
 User-facing answer
 """
+import sys
+from pathlib import Path
 
-from query.router import route_query
+if __package__ is None:
+    sys.path.insert(
+        0,
+        str(Path(__file__).resolve().parent.parent)
+    )
+    
+
+from intelligence.router import route_intelligent
 from prompting.prompt_builder import build_prompt
 from llm.generator import generate_response
 
@@ -143,12 +152,15 @@ def handle_query(query):
 
     global LAST_RESULT
 
-    result = route_query(query)
+    result = route_intelligent(query)
 
     if result.answer_type != "unknown":
+
         LAST_RESULT = result
 
     if result.answer_type == "files":
+        LAST_RESULT = result
+
         return _format_file_results(result)
 
     if result.answer_type == "time":
@@ -168,6 +180,22 @@ def handle_query(query):
 
     # Follow-up query handling
     if result.answer_type == "unknown" and LAST_RESULT:
+
+        if LAST_RESULT.answer_type == "files":
+
+            last_item = LAST_RESULT.data[0]
+
+            if isinstance(last_item, dict):
+                file_query = last_item.get("filename") or last_item.get("source")
+            else:
+                file_query = None
+
+            from query.router import _document_search
+
+            return _format_document_result(
+                _document_search(file_query)
+            )
+
         return _format_document_result(LAST_RESULT)
 
     return (

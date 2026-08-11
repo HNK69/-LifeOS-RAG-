@@ -1,110 +1,126 @@
+"""
+file_index.py
+
+Fast file-level discovery for LifeOS.
+
+File discovery should NOT read every document on every query.
+Content-based questions are handled by the semantic retrieval layer.
+
+This module focuses on:
+- filename matching
+- recursive file discovery
+- cheap metadata
+- indexed registry lookup when available
+"""
+
 from pathlib import Path
-import json
 
-SUPPORTED_EXTENSIONS = {
-    ".pdf",
-    ".docx",
-    ".txt",
-    ".md",
-    ".csv",
-    ".json",
-}
+from config import (
+    DOCUMENTS_DIR,
+    SUPPORTED_EXTENSIONS,
+)
 
 
-def get_file_index(documents_dir="data/documents"):
+def get_file_index(documents_dir=DOCUMENTS_DIR):
+    """
+    Recursively discover supported files.
+
+    This only reads filesystem metadata.
+    It does NOT open or read document contents.
+    """
+
+    documents_dir = Path(
+        documents_dir
+    ).resolve()
+
     files = []
 
-    for path in Path(documents_dir).iterdir():
-        if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS:
-            files.append({
+    if not documents_dir.exists():
+        return files
+
+    for path in documents_dir.rglob("*"):
+
+        if not path.is_file():
+            continue
+
+        if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            continue
+
+        files.append(
+            {
                 "name": path.name,
                 "stem": path.stem,
                 "path": str(path),
                 "extension": path.suffix.lower(),
-            })
+                "size": path.stat().st_size,
+            }
+        )
 
     return files
 
 
-def _extract_text(path):
-    """Extract searchable text from a supported file."""
-
-    suffix = path.suffix.lower()
-
-    try:
-        if suffix in {".txt", ".md"}:
-            return path.read_text(
-                encoding="utf-8",
-                errors="ignore",
-            )
-
-        if suffix == ".json":
-            data = json.loads(
-                path.read_text(
-                    encoding="utf-8",
-                    errors="ignore",
-                )
-            )
-            return json.dumps(data)
-
-        if suffix == ".csv":
-            return path.read_text(
-                encoding="utf-8",
-                errors="ignore",
-            )
-
-        if suffix == ".docx":
-            from docx import Document
-
-            document = Document(path)
-
-            return "\n".join(
-                paragraph.text
-                for paragraph in document.paragraphs
-            )
-
-        if suffix == ".pdf":
-            from pypdf import PdfReader
-
-            reader = PdfReader(str(path))
-
-            return "\n".join(
-                page.extract_text() or ""
-                for page in reader.pages
-            )
-
-    except Exception:
-        return ""
-
-    return ""
-
-
 def _tokenize(text):
+    """
+    Convert text into normalized search tokens.
+    """
+
     return {
         word
         for word in (
-            text.lower()
+            str(text)
+            .lower()
             .replace("-", " ")
             .replace("_", " ")
             .replace("/", " ")
             .replace("\\", " ")
             .replace(".", " ")
             .replace(",", " ")
+            .replace("(", " ")
+            .replace(")", " ")
             .split()
         )
         if len(word) > 2
     }
 
 
-def find_file(query, documents_dir="data/documents"):
+def _filename_score(query_words, file):
     """
-    Find the most relevant file using both filename and file content.
+    Score a file using filename evidence only.
 
-    Filename matches receive higher weight because this function
-    is specifically for file discovery.
+    Filename matches receive higher weight because this module
+    is specifically responsible for file discovery.
     """
 
-    query_words = _tokenize(query)
+    filename_words = _tokenize(
+        file["stem"]
+    )
+
+    exact_matches = (
+        query_words & filename_words
+    )
+
+    if not exact_matches:
+        return 0.0
+
+    return len(exact_matches) * 10.0
+
+
+def find_file(
+    query,
+    documents_dir=DOCUMENTS_DIR,
+):
+    """
+    Find the best matching file using filename evidence.
+
+    Important:
+    This function deliberately does NOT open document contents.
+
+    Semantic/content questions should go through ChromaDB retrieval.
+    """
+
+    query_words = _tokenize(
+        query
+    )
 
     if not query_words:
         return None
@@ -112,48 +128,34 @@ def find_file(query, documents_dir="data/documents"):
     best_match = None
     best_score = 0.0
 
-    for file in get_file_index(documents_dir):
+    for file in get_file_index(
+        documents_dir
+    ):
 
-        path = Path(file["path"])
-
-        filename_words = _tokenize(
-            file["stem"]
-        )
-
-        content = _extract_text(path)
-
-        content_words = _tokenize(content)
-
-        filename_matches = (
-            query_words & filename_words
-        )
-
-        content_matches = (
-            query_words & content_words
-        )
-
-        # Filename evidence is much stronger.
-        filename_score = (
-            len(filename_matches) * 5
-        )
-
-        # Content evidence allows files such as p2.docx
-        # to match "Java lab programs".
-        content_score = (
-            len(content_matches) * 1.5
-        )
-
-        score = (
-            filename_score
-            + content_score
+        score = _filename_score(
+            query_words,
+            file,
         )
 
         if score > best_score:
+
             best_score = score
             best_match = file
 
-    return (
-        best_match
-        if best_score > 0
-        else None
-    )
+        elif (
+            score == best_score
+            and score > 0
+            and best_match is not None
+        ):
+
+            # Prefer the shorter filename when the match strength
+            # is identical.
+            if len(file["name"]) < len(
+                best_match["name"]
+            ):
+                best_match = file
+
+    if best_score <= 0:
+        return None
+
+    return best_match

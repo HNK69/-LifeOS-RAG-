@@ -31,6 +31,9 @@ from typing import Any
 from pathlib import Path
 from llm.generator import classify_sources
 
+from retrieval.reranker import rerank
+
+
 from dotenv import load_dotenv
 from embeddings.embedder import generate_embeddings
 from vectordb.chroma_db import collection
@@ -440,11 +443,21 @@ def _file_discovery(query: str) -> QueryResult:
         #
         # Filename matches are deliberately weighted strongly
         # because this operation is FILE discovery, not Q&A.
+        semantic_score = 0.0
+
+        if distance != float("inf"):
+            semantic_score = 1 / (1 + distance)
+
         score = (
-            filename_overlap * 5.0
-            + content_overlap * 1.5
-            - distance
+            filename_overlap * 4.0
+            + content_overlap * 2.0
+            + semantic_score * 5.0
         )
+
+        # Semantic similarity alone cannot establish file relevance.
+        # Require lexical evidence from the filename or content.
+        if filename_overlap == 0 and content_overlap == 0:
+            continue
 
         existing = candidates.get(file_path)
 
@@ -592,6 +605,11 @@ def _document_search(query: str) -> QueryResult:
         query,
         top_k=10,
     )
+    
+    retrieved = rerank(
+        query,
+        retrieved,
+    )
 
     return QueryResult(
         query=query,
@@ -633,22 +651,109 @@ def _structured_discovery(
 # STRUCTURED QUERY
 # ---------------------------------------------------------------------
 
-def _find_dataset(
-    dataset_query: str,
-) -> dict[str, Any]:
+def _find_dataset(dataset_query: str) -> dict[str, Any]:
+    """Resolve a structured dataset using filename and schema evidence."""
 
-    results = retrieve_structured_files(
-        dataset_query
-    )
+    candidates = retrieve_structured_files()
 
-    if not results:
+    if not candidates:
+        raise FileNotFoundError("No structured datasets are available.")
+
+    query_words = {
+        word
+        for word in (
+            dataset_query.lower()
+            .replace("-", " ")
+            .replace("_", " ")
+            .split()
+        )
+        if len(word) > 2
+    }
+
+    if not query_words:
         raise FileNotFoundError(
-            f"No structured dataset found for: "
-            f"{dataset_query}"
+            f"No structured dataset found for: {dataset_query}"
         )
 
-    return results[0]
+    scored = []
 
+    for dataset in candidates:
+        filename = Path(dataset["filename"]).stem.lower()
+
+        filename_words = {
+            word
+            for word in (
+                filename
+                .replace("-", " ")
+                .replace("_", " ")
+                .split()
+            )
+            if len(word) > 2
+        }
+
+        schema_words = set()
+
+        if dataset["extension"] == ".csv":
+            import csv
+
+            try:
+                with open(
+                    dataset["path"],
+                    "r",
+                    encoding="utf-8-sig",
+                    newline="",
+                ) as file:
+                    reader = csv.reader(file)
+                    headers = next(reader, [])
+
+                for header in headers:
+                    schema_words.update(
+                        word
+                        for word in (
+                            header.lower()
+                            .replace("-", " ")
+                            .replace("_", " ")
+                            .split()
+                        )
+                        if len(word) > 2
+                    )
+            except (OSError, csv.Error):
+                continue
+
+        filename_overlap = len(
+            query_words & filename_words
+        )
+
+        schema_overlap = len(
+            query_words & schema_words
+        )
+
+        score = (
+            filename_overlap * 3.0
+            + schema_overlap * 2.0
+        )
+
+        if score > 0:
+            scored.append((score, dataset))
+
+    if not scored:
+        raise FileNotFoundError(
+            f"No structured dataset found for: {dataset_query}"
+        )
+
+    scored.sort(
+        key=lambda item: item[0],
+        reverse=True,
+    )
+
+    best_score, best_dataset = scored[0]
+
+    if len(scored) > 1 and best_score == scored[1][0]:
+        raise ValueError(
+            f"Ambiguous structured dataset query: {dataset_query}"
+        )
+
+    return best_dataset
 
 def _execute_structured_query(
     query: str,

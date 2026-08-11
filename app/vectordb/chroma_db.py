@@ -87,6 +87,17 @@ def store_embeddings(chunks, embeddings, file_path):
                 "chunk_id": i,
                 "source": path.name,
                 "file_path": str(path),
+
+                "folder": path.parent.name,
+
+                "parent_folder": (
+                    path.parent.parent.name
+                    if path.parent.parent
+                    else None
+                ),
+
+                "document_type": "",
+                "category": "",
             }
         )
 

@@ -21,28 +21,17 @@ def retrieve_structured_files(query=None):
     """
     Return successfully indexed structured files.
 
-    If query is provided, perform a simple filename-based lookup.
-
-    This intentionally does not use embeddings because structured-file
-    discovery is a file-level operation.
-
-    Time: O(n * w), where n = registered files and w = filename words.
-    Space: O(n).
+    When query is provided, match files using filename token coverage.
     """
 
     documents = get_all_documents()
-
     structured_files = []
 
     for document in documents:
-
         if document["ingestion_status"] != "success":
             continue
 
-        if document["extension"] not in {
-            ".csv",
-            ".json",
-        }:
+        if document["extension"] not in {".csv", ".json"}:
             continue
 
         metadata = document.get("metadata_json")
@@ -67,26 +56,40 @@ def retrieve_structured_files(query=None):
     if not query:
         return structured_files
 
-    query_words = set(
-        query.lower()
-        .replace("-", " ")
-        .replace("_", " ")
-        .split()
-    )
-
-    matches = []
-
-    for file in structured_files:
-
-        filename_words = set(
-            file["filename"]
-            .lower()
+    query_words = {
+        word
+        for word in (
+            query.lower()
             .replace("-", " ")
             .replace("_", " ")
             .split()
         )
+        if len(word) > 2
+    }
 
-        if query_words & filename_words:
+    if not query_words:
+        return []
+
+    matches = []
+
+    for file in structured_files:
+        filename_words = {
+            word
+            for word in (
+                file["filename"]
+                .lower()
+                .replace("-", " ")
+                .replace("_", " ")
+                .split()
+            )
+            if len(word) > 2
+        }
+
+        overlap = query_words & filename_words
+        coverage = len(overlap) / len(query_words)
+
+        if coverage >= 0.5:
             matches.append(file)
 
     return matches
+
