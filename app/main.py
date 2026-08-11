@@ -15,6 +15,15 @@ Response adapter
     ↓
 User-facing answer
 """
+import sys
+from pathlib import Path
+
+if __package__ is None:
+    sys.path.insert(
+        0,
+        str(Path(__file__).resolve().parent.parent)
+    )
+    
 
 from intelligence.router import route_intelligent
 from prompting.prompt_builder import build_prompt

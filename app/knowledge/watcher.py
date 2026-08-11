@@ -7,11 +7,13 @@ Responsibilities:
 - Detect new files.
 - Detect modified files.
 - Detect deleted files.
-- Wait for files to become stable before ingestion.
-- Delegate all actual ingestion work to ingest_documents().
+- Wait for files to become stable.
+- Debounce bursts of filesystem events.
+- Run one incremental ingestion pass per burst.
 """
 
 import logging
+import threading
 import time
 from pathlib import Path
 
@@ -24,19 +26,26 @@ from ingestion.ingest import ingest_documents
 
 logger = logging.getLogger(__name__)
 
-# How long the file must remain unchanged before ingestion.
-STABILITY_SECONDS = 1.0
 
-# How frequently to check file stability.
+# ------------------------------------------------------------
+# FILE STABILITY
+# ------------------------------------------------------------
+
+STABILITY_SECONDS = 1.0
 CHECK_INTERVAL_SECONDS = 0.25
+
+
+# ------------------------------------------------------------
+# EVENT DEBOUNCING
+# ------------------------------------------------------------
+
+DEBOUNCE_SECONDS = 2.0
 
 
 def wait_for_file_stability(file_path):
     """
     Wait until a file exists, is non-empty, and its size remains
     unchanged for STABILITY_SECONDS.
-
-    This prevents ingestion of empty or partially written files.
     """
 
     path = Path(file_path)
@@ -45,30 +54,41 @@ def wait_for_file_stability(file_path):
     previous_size = None
 
     while True:
+
         if not path.exists() or not path.is_file():
             return False
 
         try:
             current_size = path.stat().st_size
+
         except OSError:
-            time.sleep(CHECK_INTERVAL_SECONDS)
+            time.sleep(
+                CHECK_INTERVAL_SECONDS
+            )
             continue
 
-        # Never ingest an empty file.
         if current_size == 0:
+
             stable_since = None
             previous_size = 0
-            time.sleep(CHECK_INTERVAL_SECONDS)
+
+            time.sleep(
+                CHECK_INTERVAL_SECONDS
+            )
+
             continue
 
-        # File size changed: restart the stability timer.
         if current_size != previous_size:
+
             previous_size = current_size
             stable_since = time.monotonic()
-            time.sleep(CHECK_INTERVAL_SECONDS)
+
+            time.sleep(
+                CHECK_INTERVAL_SECONDS
+            )
+
             continue
 
-        # Size is unchanged and non-zero.
         if (
             stable_since is not None
             and time.monotonic() - stable_since
@@ -76,24 +96,47 @@ def wait_for_file_stability(file_path):
         ):
             return True
 
-        time.sleep(CHECK_INTERVAL_SECONDS)
+        time.sleep(
+            CHECK_INTERVAL_SECONDS
+        )
 
 
 class DocumentEventHandler(FileSystemEventHandler):
     """
-    Filesystem event handler.
+    Collect filesystem events and debounce them.
 
-    The handler does not implement ingestion itself.
-    It delegates to the existing ingestion pipeline.
+    Example:
+
+        WhatsApp downloads 20 files
+                    ↓
+        20 filesystem events
+                    ↓
+        debounce window
+                    ↓
+        ONE ingestion pass
     """
 
-    def _process_file_event(self, event_type, file_path):
-        """
-        Wait for a file to stabilize and then run incremental
-        ingestion.
-        """
+    def __init__(self, documents_dir):
 
-        path = Path(file_path)
+        super().__init__()
+
+        self.documents_dir = Path(
+            documents_dir
+        ).resolve()
+
+        self._pending_paths = set()
+
+        self._lock = threading.Lock()
+
+        self._timer = None
+
+    # --------------------------------------------------------
+    # EVENT COLLECTION
+    # --------------------------------------------------------
+
+    def _queue_event(self, event_type, file_path):
+
+        path = Path(file_path).resolve()
 
         logger.info(
             "Filesystem change detected: %s: %s",
@@ -101,65 +144,132 @@ class DocumentEventHandler(FileSystemEventHandler):
             path,
         )
 
-        if event_type == "deleted":
-            self._run_ingestion()
+        with self._lock:
+
+            self._pending_paths.add(
+                str(path)
+            )
+
+            if self._timer is not None:
+                self._timer.cancel()
+
+            self._timer = threading.Timer(
+                DEBOUNCE_SECONDS,
+                self._flush_events,
+            )
+
+            self._timer.daemon = True
+
+            self._timer.start()
+
+    # --------------------------------------------------------
+    # EVENT FLUSH
+    # --------------------------------------------------------
+
+    def _flush_events(self):
+
+        with self._lock:
+
+            paths = set(
+                self._pending_paths
+            )
+
+            self._pending_paths.clear()
+
+            self._timer = None
+
+        if not paths:
             return
 
-        if not wait_for_file_stability(path):
-            logger.warning(
-                "File disappeared before becoming stable: %s",
-                path,
+        logger.info(
+            "Processing %d filesystem changes",
+            len(paths),
+        )
+
+        # Wait for newly created/modified files to finish writing.
+        for path_string in paths:
+
+            path = Path(path_string)
+
+            if not path.exists():
+                continue
+
+            if not path.is_file():
+                continue
+
+            wait_for_file_stability(
+                path
             )
-            return
 
         self._run_ingestion()
 
-    @staticmethod
-    def _run_ingestion():
-        """Run the existing incremental ingestion pipeline."""
+    # --------------------------------------------------------
+    # INGESTION
+    # --------------------------------------------------------
+
+    def _run_ingestion(self):
 
         try:
-            ingest_documents()
+
+            ingest_documents(
+                documents_dir=self.documents_dir
+            )
 
         except Exception:
+
             logger.exception(
                 "Automatic ingestion failed."
             )
 
+    # --------------------------------------------------------
+    # WATCHDOG EVENTS
+    # --------------------------------------------------------
+
     def on_created(self, event):
 
-        if not event.is_directory:
-            self._process_file_event(
-                "created",
-                event.src_path,
-            )
+        if event.is_directory:
+            return
+
+        self._queue_event(
+            "created",
+            event.src_path,
+        )
 
     def on_modified(self, event):
 
-        if not event.is_directory:
-            self._process_file_event(
-                "modified",
-                event.src_path,
-            )
+        if event.is_directory:
+            return
+
+        self._queue_event(
+            "modified",
+            event.src_path,
+        )
 
     def on_deleted(self, event):
 
-        if not event.is_directory:
-            self._process_file_event(
-                "deleted",
-                event.src_path,
-            )
+        if event.is_directory:
+            return
+
+        self._queue_event(
+            "deleted",
+            event.src_path,
+        )
 
     def on_moved(self, event):
 
-        if not event.is_directory:
-            self._process_file_event(
-                "moved",
-                event.dest_path,
-            )
+        if event.is_directory:
+            return
+
+        # The destination is what now exists.
+        self._queue_event(
+            "moved",
+            event.dest_path,
+        )
 
 
-def start_watcher(documents_dir=DOCUMENTS_DIR):
+def start_watcher(
+    documents_dir=DOCUMENTS_DIR
+):
     """
     Start the LifeOS document watcher.
 
@@ -167,7 +277,9 @@ def start_watcher(documents_dir=DOCUMENTS_DIR):
     continuously watches the document directory.
     """
 
-    documents_dir = Path(documents_dir).resolve()
+    documents_dir = Path(
+        documents_dir
+    ).resolve()
 
     documents_dir.mkdir(
         parents=True,
@@ -182,7 +294,9 @@ def start_watcher(documents_dir=DOCUMENTS_DIR):
         documents_dir=documents_dir
     )
 
-    event_handler = DocumentEventHandler()
+    event_handler = DocumentEventHandler(
+        documents_dir
+    )
 
     observer = Observer()
 
