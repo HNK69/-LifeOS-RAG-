@@ -173,3 +173,44 @@ def delete_document(file_path):
         len(ids),
         path.name
     )
+
+def store_media_description(
+    file_path,
+    description,
+    embedding,
+):
+        """
+        Store an image's vision description as a searchable Chroma document.
+        """
+
+        path = Path(file_path).resolve()
+
+        document_id = _document_id(path)
+        chunk_id = f"{document_id}_media"
+
+        metadata = {
+            "chunk_id": 0,
+            "source": path.name,
+            "file_path": str(path),
+            "folder": path.parent.name,
+            "parent_folder": (
+                path.parent.parent.name
+                if path.parent.parent
+                else None
+            ),
+            "document_type": "media",
+            "category": "image",
+            "media_type": "image",
+        }
+
+        collection.upsert(
+            ids=[chunk_id],
+            documents=[description],
+            embeddings=[embedding.tolist()],
+            metadatas=[metadata],
+        )
+
+        logger.info(
+            "Stored media description for %s",
+            path.name,
+        )

@@ -27,6 +27,11 @@ from embeddings.embedder import generate_embeddings
 
 from ingestion.structured.handler import handle_structured_file
 
+from vectordb.chroma_db import store_media_description
+
+
+from llm.generator import analyze_image
+
 from vectordb.chroma_db import (
     store_embeddings,
     delete_document,
@@ -243,6 +248,19 @@ def ingest_file(file_path):
 
             if is_unchanged(file_path, file_hash):
                 return False
+
+            if media_metadata["media_type"] == "image":
+                media_metadata["description"] = analyze_image(file_path)
+
+                description_embedding = generate_embeddings(
+                    [media_metadata["description"]]
+                )
+
+                store_media_description(
+                    file_path,
+                    media_metadata["description"],
+                    description_embedding[0],
+                )
 
             register_media(
                 file_path,

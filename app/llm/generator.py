@@ -3,6 +3,12 @@ import os
 
 from dotenv import load_dotenv
 from openai import OpenAI
+import base64
+import mimetypes
+from pathlib import Path
+
+
+VISION_MODEL = "google/gemma-4-31b-it"
 
 
 load_dotenv()
@@ -72,6 +78,80 @@ Include every candidate exactly once.
             {"role": "user", "content": prompt}
         ],
         temperature=0,
+    )
+
+    return response.choices[0].message.content
+
+
+def analyze_image(file_path, prompt=None):
+    """
+    Analyze a local image using an OpenRouter free vision model.
+    """
+
+    path = Path(file_path)
+
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Image not found: {path}"
+        )
+
+    mime_type, _ = mimetypes.guess_type(
+        path.name
+    )
+
+    if mime_type not in {
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+    }:
+        raise ValueError(
+            f"Unsupported image type: {mime_type}"
+        )
+
+    image_data = base64.b64encode(
+        path.read_bytes()
+    ).decode("utf-8")
+
+    if prompt is None:
+        prompt = """
+Analyze this image for LifeOS memory.
+
+Return a concise description containing:
+- what is visible
+- important objects
+- people if clearly identifiable
+- text/OCR if readable
+- useful context such as location or activity
+- distinctive details that could help retrieve this image later
+
+Do not invent details that are not visible.
+"""
+
+    response = client.chat.completions.create(
+        model=VISION_MODEL,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": prompt,
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": (
+                                f"data:{mime_type};base64,"
+                                f"{image_data}"
+                            )
+                        },
+                    },
+                ],
+            }
+        ],
+        temperature=0,
+        max_tokens=1200,
     )
 
     return response.choices[0].message.content
