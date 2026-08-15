@@ -2,6 +2,8 @@ from embeddings.embedder import generate_embeddings
 from vectordb.chroma_db import collection
 from retrieval.file_index import find_file
 from retrieval.structured_retriever import retrieve_structured_files
+from retrieval.people_retriever import retrieve_by_person
+from retrieval.people_retriever import retrieve_by_person, retrieve_by_people
 
 
 def retrieve_chunks(query, top_k=10):
@@ -37,8 +39,20 @@ def retrieve_chunks(query, top_k=10):
     return retrieved
 
 
+
 def retrieve(query, top_k=3):
     """Retrieve relevant information for general queries."""
+
+    person_query = _extract_people_query(query)
+
+    if person_query:
+        if isinstance(person_query, list):
+            person_matches = retrieve_by_people(person_query)
+        else:
+            person_matches = retrieve_by_person(person_query)
+
+        if person_matches:
+            return person_matches
 
     structured_matches = retrieve_structured_files(query)
 
@@ -71,3 +85,45 @@ def retrieve(query, top_k=3):
         ]
 
     return retrieve_chunks(query, top_k)
+
+
+def _extract_people_query(query):
+    text = query.lower()
+
+    triggers = [
+        "photos with ",
+        "pictures with ",
+        "images with ",
+        "photos of ",
+        "pictures of ",
+        "images of ",
+    ]
+
+    for trigger in triggers:
+        if trigger in text:
+            return query.lower().split(trigger, 1)[1].strip()
+
+    return None
+
+
+
+def _extract_people_query(query):
+    text = query.lower()
+
+    multi_triggers = [
+        "photos with ",
+        "pictures with ",
+        "images with ",
+    ]
+
+    for trigger in multi_triggers:
+        if trigger in text:
+            names = text.split(trigger, 1)[1]
+            if " and " in names:
+                return [
+                    name.strip()
+                    for name in names.split(" and ")
+                    if name.strip()
+                ]
+
+    return None

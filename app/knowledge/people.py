@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 import numpy as np
+from config import FACE_MATCH_THRESHOLD
 
 from config import DATA_DIR
 
@@ -189,14 +190,12 @@ def register_unknown_faces(file_path):
 
     return registered
 
-def match_face(embedding, threshold=0.45):
-    """
-    Match a face embedding against known stored embeddings.
 
-    Returns the best person match or None.
-    """
+def match_face(embedding, threshold=None):
+    """Match a face embedding against all stored face embeddings."""
 
-    initialize_people_registry()
+    if threshold is None:
+        threshold = FACE_MATCH_THRESHOLD
 
     query = np.asarray(
         embedding,
@@ -347,3 +346,154 @@ def enroll_user_faces(person_id, file_paths):
             })
 
     return results
+
+def score_face_against_person(embedding, person_id):
+    """Return cosine similarity against every embedding for one person."""
+    import numpy as np
+
+    query = np.asarray(embedding, dtype=np.float32)
+    query_norm = np.linalg.norm(query)
+
+    if query_norm == 0:
+        return []
+
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT embedding_id, embedding_json
+            FROM face_embeddings
+            WHERE person_id = ?
+            """,
+            (person_id,),
+        ).fetchall()
+
+    scores = []
+
+    for row in rows:
+        stored = np.asarray(
+            json.loads(row["embedding_json"]),
+            dtype=np.float32,
+        )
+        stored_norm = np.linalg.norm(stored)
+
+        if stored_norm == 0:
+            continue
+
+        similarity = float(
+            np.dot(query, stored)
+            / (query_norm * stored_norm)
+        )
+
+        scores.append({
+            "embedding_id": row["embedding_id"],
+            "similarity": similarity,
+        })
+
+    return scores
+
+def analyze_image_faces(file_path):
+    """Detect and persist identity for every face in an image."""
+    from knowledge.face import extract_faces
+
+    faces = extract_faces(file_path)
+    results = []
+
+    for index, face in enumerate(faces):
+        identity = identify_or_register_face(
+            face["embedding"],
+            source_path=file_path,
+        )
+
+        results.append({
+            "face_index": index,
+            "bbox": face["bbox"],
+            "det_score": face["det_score"],
+            **identity,
+        })
+
+    return results
+
+def identify_or_register_face(
+    embedding,
+    source_path=None,
+    threshold=None,
+):
+    """Match a face to an existing person or create a new anonymous person."""
+
+    match = match_face(
+        embedding,
+        threshold=threshold,
+    )
+
+    if match:
+        person = get_person(match["person_id"])
+
+        return {
+            "person_id": match["person_id"],
+            "label": person["label"] if person else None,
+            "similarity": match["similarity"],
+            "status": "matched",
+            "created": False,
+        }
+
+    person_id = create_person(
+        label=None,
+        is_user=False,
+        status="unknown",
+    )
+
+    add_face_embedding(
+        person_id,
+        embedding,
+        source_path=source_path,
+    )
+
+    return {
+        "person_id": person_id,
+        "label": None,
+        "similarity": None,
+        "status": "unknown",
+        "created": True,
+    }
+
+def confirm_person_identity(person_id, label):
+    """Assign a user-confirmed label to an anonymous person."""
+    return label_person(
+        person_id=person_id,
+        label=label,
+        is_user=False,
+    )
+
+def get_person_labels_for_image(file_path):
+    """Return confirmed/recognized people found in an image."""
+    results = analyze_image_faces(file_path)
+
+    people = []
+
+    for item in results:
+        if item["status"] == "matched" and item["person_id"]:
+            person = get_person(item["person_id"])
+
+            if person:
+                people.append({
+                    "person_id": person["person_id"],
+                    "label": person["label"],
+                    "similarity": item["similarity"],
+                })
+
+    return people
+
+def get_people_metadata(file_path):
+    """Return dynamic recognized-person metadata for an image."""
+    people = get_person_labels_for_image(file_path)
+
+    return {
+        "people": [
+            {
+                "person_id": person["person_id"],
+                "label": person["label"],
+                "similarity": person["similarity"],
+            }
+            for person in people
+        ]
+    }

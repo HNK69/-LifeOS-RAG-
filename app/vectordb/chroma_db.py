@@ -16,6 +16,7 @@ previous working version.
 import hashlib
 import logging
 from pathlib import Path
+import json
 
 import chromadb
 
@@ -178,6 +179,7 @@ def store_media_description(
     file_path,
     description,
     embedding,
+    people=None,
 ):
         """
         Store an image's vision description as a searchable Chroma document.
@@ -190,6 +192,7 @@ def store_media_description(
 
         metadata = {
             "chunk_id": 0,
+            "people": json.dumps(people or []),
             "source": path.name,
             "file_path": str(path),
             "folder": path.parent.name,

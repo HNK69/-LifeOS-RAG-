@@ -32,6 +32,8 @@ from vectordb.chroma_db import store_media_description
 
 from llm.generator import analyze_image
 
+from knowledge.people import get_people_metadata
+
 from vectordb.chroma_db import (
     store_embeddings,
     delete_document,
@@ -256,10 +258,13 @@ def ingest_file(file_path):
                     [media_metadata["description"]]
                 )
 
+                people_metadata = get_people_metadata(file_path)
+                
                 store_media_description(
                     file_path,
                     media_metadata["description"],
                     description_embedding[0],
+                    people=people_metadata["people"],
                 )
 
             register_media(
