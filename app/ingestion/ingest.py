@@ -259,7 +259,7 @@ def ingest_file(file_path):
                 )
 
                 people_metadata = get_people_metadata(file_path)
-                
+
                 store_media_description(
                     file_path,
                     media_metadata["description"],
@@ -330,29 +330,7 @@ def ingest_file(file_path):
 
             return False
 
-        if is_media_file(file_path):
-            logger.info(
-                "Registering media file: %s",
-                file_path.name,
-            )
 
-            media_metadata = get_media_metadata(
-                file_path
-            )
-
-            register_media(
-                file_path,
-                file_hash,
-                media_metadata,
-            )
-
-            logger.info(
-                "Media file registered: %s | type=%s",
-                file_path.name,
-                media_metadata["media_type"],
-            )
-
-            return True
 
         # -----------------------------------------------------
         # STRUCTURED DATA
