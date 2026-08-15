@@ -71,11 +71,10 @@ class QueryIntent:
     confidence: float
     arguments: dict[str, Any]
 
-
 @dataclass
 class QueryResult:
     query: str
-    intent: QueryIntent
+    intent: Any
     answer_type: str
     data: Any
 
