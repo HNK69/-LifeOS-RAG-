@@ -25,3 +25,4 @@ Thumbs.db
 
 # Backup files
 *.bak
+data/
