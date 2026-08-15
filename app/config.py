@@ -166,3 +166,7 @@ LOG_LEVEL = os.getenv(
     "LIFEOS_LOG_LEVEL",
     "INFO",
 )
+
+FACE_MATCH_THRESHOLD = float(
+    os.getenv("FACE_MATCH_THRESHOLD", "0.50")
+)
