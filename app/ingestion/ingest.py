@@ -195,7 +195,6 @@ def _process_text_document(file_path, file_hash):
 
 
 def ingest_file(file_path):
-    file_path = Path(file_path).resolve()
     """
     Incrementally ingest ONE file.
 

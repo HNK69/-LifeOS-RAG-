@@ -1,9 +1,86 @@
 import json
+import re
 from typing import Any
 
 from llm.generator import generate_response
 
 from .models import IntentPlan
+
+
+# ---------------------------------------------------------------------
+# DETERMINISTIC STRUCTURED-QUERY RESCUE
+# ---------------------------------------------------------------------
+#
+# The LLM planner is non-deterministic.  On some runs it correctly
+# classifies "What is the maximum monthly charge?" as structured_query;
+# on others it returns "unknown".
+#
+# This rescue layer runs AFTER the LLM and checks whether the raw user
+# query contains clear structured-data aggregation/count signals.
+# When it detects them AND the LLM returned "unknown", it overrides
+# the intent to structured_query with the correct operation and
+# aggregation.
+#
+# Design constraints:
+#   - No test-specific strings or hardcoded dataset/column names.
+#   - Only generic aggregation/count patterns.
+#   - Must remain extensible for future structured intents.
+# ---------------------------------------------------------------------
+
+# Compiled once.  Each tuple: (regex, operation, aggregation-or-None).
+_STRUCTURED_PATTERNS: list[tuple[re.Pattern, str, str | None]] = [
+    (re.compile(r"\b(?:maximum|highest|largest|greatest|max)\b", re.I),
+     "aggregate", "max"),
+    (re.compile(r"\b(?:minimum|lowest|smallest|least|min)\b", re.I),
+     "aggregate", "min"),
+    (re.compile(r"\b(?:average|mean|avg)\b", re.I),
+     "aggregate", "avg"),
+    (re.compile(r"\b(?:total|sum)\b", re.I),
+     "aggregate", "sum"),
+    (re.compile(r"\b(?:how many|count of|count the|number of)\b", re.I),
+     "count", None),
+    (re.compile(r"\b(?:sort|order|rank)\b", re.I),
+     "sort", None),
+    (re.compile(r"\b(?:filter|where|with)\b.*\b(?:equal|equals|is)\b", re.I),
+     "filter", None),
+]
+
+
+def _rescue_structured_intent(
+    query: str,
+    data: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Override 'unknown' intent when the query clearly requests a
+    structured-data operation.
+
+    Only activates when:
+      1. The LLM returned intent == "unknown".
+      2. A generic aggregation/count pattern is found in the query.
+
+    Returns the (possibly mutated) data dict.
+    """
+
+    if data.get("intent") != "unknown":
+        return data
+
+    for pattern, operation, aggregation in _STRUCTURED_PATTERNS:
+        if pattern.search(query):
+            data["intent"] = "structured_query"
+            arguments = data.setdefault("arguments", {})
+            arguments["operation"] = operation
+
+            if aggregation is not None:
+                arguments["aggregation"] = aggregation
+
+            # Use the full query as the dataset_query fallback so
+            # the downstream dataset resolver can attempt matching.
+            if not arguments.get("dataset_query"):
+                arguments["dataset_query"] = query
+
+            break
+
+    return data
 
 
 SYSTEM_PROMPT = """
@@ -89,6 +166,12 @@ def plan_query(query: str) -> IntentPlan:
     )
 
     data: dict[str, Any] = json.loads(raw)
+
+    # ------------------------------------------------------------------
+    # Deterministic rescue: if the LLM returned "unknown" but the
+    # query clearly contains structured-data signals, override.
+    # ------------------------------------------------------------------
+    data = _rescue_structured_intent(query, data)
 
     if data.get("intent") == "structured_query":
         arguments = data.setdefault("arguments", {})

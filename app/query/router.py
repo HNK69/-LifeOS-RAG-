@@ -1,15 +1,18 @@
 """
-LifeOS unified LLM query router.
+LifeOS query tool functions.
+
+These functions are the deterministic execution layer called by the
+intelligence router after the LLM planner classifies the user's intent.
 
 Architecture:
 
     User query
         ↓
-    LLM planner
+    intelligence/planner.py  (LLM → IntentPlan)
         ↓
-    Structured JSON intent
+    intelligence/router.py   (dispatch)
         ↓
-    Deterministic Python tool
+    query/router.py          (deterministic tool functions)
         ↓
     QueryResult
 
@@ -22,9 +25,6 @@ No dataset/document names are hard-coded.
 from __future__ import annotations
 
 import json
-import os
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -34,7 +34,6 @@ from llm.generator import classify_sources
 from retrieval.reranker import rerank
 
 
-from dotenv import load_dotenv
 from embeddings.embedder import generate_embeddings
 from vectordb.chroma_db import collection
 
@@ -50,18 +49,6 @@ from ingestion.structured.query import (
 )
 
 
-load_dotenv()
-
-
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_ROUTER_API_KEY")
-OPENROUTER_MODEL = os.getenv(
-    "OPENROUTER_ROUTER_MODEL",
-    "openai/gpt-oss-120b",
-)
-
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-
-REQUEST_TIMEOUT = 30
 MAX_RESULTS = 10
 
 
@@ -77,277 +64,6 @@ class QueryResult:
     intent: Any
     answer_type: str
     data: Any
-
-
-# ---------------------------------------------------------------------
-# LLM PLANNER
-# ---------------------------------------------------------------------
-
-SYSTEM_PROMPT = """
-You are the LifeOS query planner.
-
-Your job is ONLY to understand the user's request and choose the
-appropriate LifeOS operation.
-
-You do NOT answer the user.
-You do NOT invent information.
-You return ONLY valid JSON.
-
-Available operations:
-
-1. file_discovery
-   User wants to find, locate, show, send, list, or identify files.
-
-2. document_search
-   User wants information contained inside their documents.
-
-3. structured_discovery
-   User wants to find or identify a dataset/table/spreadsheet.
-
-4. structured_query
-   User wants analysis/calculation/filtering/sorting/counting
-   over a structured dataset.
-
-5. schedule_query
-   User asks about classes, timetable, schedule, today,
-   tomorrow, next class, current class, etc.
-
-6. current_time
-   User explicitly asks for current time/date.
-
-7. unknown
-   Use when the request cannot reasonably be mapped to the
-   available LifeOS capabilities.
-
-IMPORTANT:
-
-"lab" does NOT automatically mean schedule.
-"maximum" does NOT automatically mean structured data.
-"dataset" does NOT automatically mean analysis.
-
-Use the complete semantic meaning of the request.
-
-Examples:
-
-"I need my Java lab programs"
-→ file_discovery
-
-"Which class do I have today?"
-→ schedule_query
-
-"What is the maximum stack size?"
-→ document_search
-
-"I need my Telco Customer Churn dataset"
-→ structured_discovery
-
-"How many customers churned?"
-→ structured_query
-
-"What is the average monthly charge?"
-→ structured_query
-
-"What time is it?"
-→ current_time
-
-Return exactly:
-
-{
-  "intent": "one of the available operations",
-  "confidence": 0.0,
-  "arguments": {}
-}
-
-For structured_query, arguments may contain:
-
-{
-  "dataset_query": "...",
-  "operation": "count | aggregate | filter | sort",
-  "column": "...",
-  "value": "...",
-  "filters": {},
-  "aggregation": "sum | avg | min | max",
-  "descending": true,
-  "limit": 10
-}
-
-Only include arguments that are actually required.
-"""
-
-
-def _require_api_key() -> str:
-    if not OPENROUTER_API_KEY:
-        raise RuntimeError(
-            "OPENROUTER_ROUTER_API_KEY is not configured."
-        )
-
-    return OPENROUTER_API_KEY
-
-
-def _call_planner(query: str) -> dict[str, Any]:
-    """
-    Ask the LLM for a structured intent.
-
-    Network complexity:
-        O(1) request from LifeOS perspective.
-
-    Memory:
-        O(response size).
-    """
-
-    api_key = _require_api_key()
-
-    payload = {
-        "model": OPENROUTER_MODEL,
-        "temperature": 0,
-        "messages": [
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": query,
-            },
-        ],
-        "response_format": {
-            "type": "json_object"
-        },
-    }
-
-    request = urllib.request.Request(
-        OPENROUTER_URL,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "http://localhost",
-            "X-Title": "LifeOS",
-        },
-        method="POST",
-    )
-
-    try:
-        with urllib.request.urlopen(
-            request,
-            timeout=REQUEST_TIMEOUT,
-        ) as response:
-
-            raw = response.read().decode("utf-8")
-
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode(
-            "utf-8",
-            errors="replace",
-        )
-
-        raise RuntimeError(
-            f"OpenRouter HTTP {exc.code}: {body}"
-        ) from exc
-
-    except urllib.error.URLError as exc:
-        raise RuntimeError(
-            f"OpenRouter connection failed: {exc.reason}"
-        ) from exc
-
-    try:
-        response_json = json.loads(raw)
-
-        content = response_json["choices"][0]["message"][
-            "content"
-        ]
-
-        plan = json.loads(content)
-
-    except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
-        raise RuntimeError(
-            "OpenRouter returned an invalid planner response."
-        ) from exc
-
-    if not isinstance(plan, dict):
-        raise RuntimeError(
-            "Planner response must be a JSON object."
-        )
-
-    return plan
-
-
-# ---------------------------------------------------------------------
-# VALIDATION
-# ---------------------------------------------------------------------
-
-_ALLOWED_INTENTS = {
-    "file_discovery",
-    "document_search",
-    "structured_discovery",
-    "structured_query",
-    "schedule_query",
-    "current_time",
-    "unknown",
-}
-
-_ALLOWED_OPERATIONS = {
-    "count",
-    "aggregate",
-    "filter",
-    "sort",
-}
-
-_ALLOWED_AGGREGATIONS = {
-    "sum",
-    "avg",
-    "min",
-    "max",
-}
-
-
-def _validate_plan(plan: dict[str, Any]) -> QueryIntent:
-
-    intent = plan.get("intent")
-    confidence = plan.get("confidence", 0.0)
-    arguments = plan.get("arguments", {})
-
-    if intent not in _ALLOWED_INTENTS:
-        raise ValueError(
-            f"Invalid planner intent: {intent!r}"
-        )
-
-    try:
-        confidence = float(confidence)
-    except (TypeError, ValueError):
-        confidence = 0.0
-
-    confidence = max(
-        0.0,
-        min(1.0, confidence),
-    )
-
-    if not isinstance(arguments, dict):
-        arguments = {}
-
-    if intent == "structured_query":
-
-        operation = arguments.get("operation")
-
-        if operation not in _ALLOWED_OPERATIONS:
-            raise ValueError(
-                f"Invalid structured operation: {operation!r}"
-            )
-
-        if operation == "aggregate":
-
-            aggregation = arguments.get("aggregation")
-
-            if aggregation not in _ALLOWED_AGGREGATIONS:
-                raise ValueError(
-                    f"Invalid aggregation: {aggregation!r}"
-                )
-
-    return QueryIntent(
-        name=intent,
-        confidence=confidence,
-        arguments=arguments,
-    )
 
 
 # ---------------------------------------------------------------------
@@ -515,81 +231,6 @@ def _file_discovery(query: str) -> QueryResult:
         ),
         answer_type="files",
         data=cleaned_results,
-    )
-    """
-    Discover files using a two-stage strategy:
-
-    1. Exact registry search.
-    2. Semantic document retrieval fallback.
-
-    Exact matches are preferred; semantic matches allow natural-language
-    requests such as "my Java lab programs" to find files whose filenames
-    do not contain those exact words.
-    """
-
-    # Fast path: exact filename/path discovery.
-    exact_matches = find_documents(query)
-
-    if exact_matches:
-        return QueryResult(
-            query=query,
-            intent=QueryIntent(
-                "file_discovery",
-                1.0,
-                {"method": "registry"},
-            ),
-            answer_type="files",
-            data=exact_matches,
-        )
-
-    # Semantic fallback.
-    retrieved = retrieve(query)
-
-    files = {}
-    semantic_scores = {}
-
-    for item in retrieved:
-        source = item.get("source")
-        file_path = item.get("file_path")
-
-        if not source or not file_path:
-            continue
-
-        # Keep the best semantic distance for each file.
-        distance = item.get("distance")
-
-        if distance is None:
-            distance = float("inf")
-
-        existing = semantic_scores.get(file_path)
-
-        if existing is None or distance < existing:
-            semantic_scores[file_path] = distance
-
-            files[file_path] = {
-                "path": file_path,
-                "filename": source,
-                "extension": (
-                    Path(source).suffix.lower()
-                ),
-                "match_type": "semantic",
-                "distance": distance,
-            }
-
-    results = sorted(
-        files.values(),
-        key=lambda item: item["distance"],
-    )
-
-    return QueryResult(
-        query=query,
-        intent=QueryIntent(
-            "file_discovery",
-            0.90 if results else 0.40,
-            {"method": "semantic"},
-        ),
-        answer_type="files",
-        data=results,
     )
 
 
@@ -811,8 +452,7 @@ def _execute_structured_query(
 
         result = query_csv(
             file_path,
-            column=column,
-            value=value,
+            filters={column: value},
             max_results=min(
                 int(
                     arguments.get(
@@ -1002,72 +642,4 @@ def _current_time(
             "time": now.strftime("%H:%M:%S"),
             "weekday": now.strftime("%A"),
         },
-    )
-
-
-# ---------------------------------------------------------------------
-# MAIN ROUTER
-# ---------------------------------------------------------------------
-
-def route_query(
-    query: str,
-) -> QueryResult:
-    """
-    Main LifeOS query entry point.
-
-    Flow:
-
-        query
-          ↓
-        LLM planner
-          ↓
-        validation
-          ↓
-        deterministic execution
-          ↓
-        QueryResult
-    """
-
-    if not isinstance(query, str):
-        raise TypeError(
-            "query must be a string."
-        )
-
-    query = query.strip()
-
-    if not query:
-        raise ValueError(
-            "Query cannot be empty."
-        )
-
-    plan = _call_planner(query)
-
-    intent = _validate_plan(plan)
-
-    if intent.name == "file_discovery":
-        return _file_discovery(query)
-
-    if intent.name == "document_search":
-        return _document_search(query)
-
-    if intent.name == "structured_discovery":
-        return _structured_discovery(query)
-
-    if intent.name == "structured_query":
-        return _execute_structured_query(
-            query,
-            intent.arguments,
-        )
-
-    if intent.name == "schedule_query":
-        return _schedule_query(query)
-
-    if intent.name == "current_time":
-        return _current_time(query)
-
-    return QueryResult(
-        query=query,
-        intent=intent,
-        answer_type="unknown",
-        data=None,
     )

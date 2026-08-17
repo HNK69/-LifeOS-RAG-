@@ -27,6 +27,13 @@ class StructuredArguments(BaseModel):
             "maximum": "aggregate",
             "minimum": "aggregate",
             "total": "aggregate",
+            "sum": "aggregate",
+            "avg": "aggregate",
+            "min": "aggregate",
+            "max": "aggregate",
+            "how_many": "count",
+            "number": "count",
+            "count_rows": "count",
         }
         return aliases.get(str(value).lower(), value) if value else value
 
