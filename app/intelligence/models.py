@@ -3,8 +3,14 @@ from pydantic import BaseModel, Field, field_validator
 
 
 IntentName = Literal[
-    "file_discovery", "document_search", "structured_discovery",
-    "structured_query", "schedule_query", "current_time", "unknown",
+    "file_discovery",
+    "document_search",
+    "structured_discovery",
+    "structured_query",
+    "schedule_query",
+    "current_time",
+    "people_search",
+    "unknown",
 ]
 
 
@@ -17,6 +23,7 @@ class StructuredArguments(BaseModel):
     aggregation: Literal["sum", "avg", "min", "max"] | None = None
     descending: bool = False
     limit: int = Field(default=10, ge=1, le=100)
+    person_labels: list[str] = Field(default_factory=list)
 
     @field_validator("operation", mode="before")
     @classmethod

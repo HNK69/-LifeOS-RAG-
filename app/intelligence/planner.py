@@ -146,6 +146,14 @@ Arguments may contain:
 dataset_query, operation, column, value, filters,
 aggregation, descending, limit.
 
+people_search:
+Use when the user is asking to find, show, or retrieve media based on
+people/entities appearing in that media.
+
+Extract the referenced person/entity names or labels into person_labels.
+Do not assume a fixed set of names or keywords.
+If multiple people are referenced, include all of them.
+
 Return:
 {
   "intent": "...",
