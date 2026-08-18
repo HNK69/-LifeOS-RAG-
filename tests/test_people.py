@@ -61,3 +61,42 @@ def test_confirm_person_identity_persists_label(isolated_registry):
     assert person["label"] == "Test Person"
     assert person["status"] == "confirmed"
     assert person["is_user"] == 0
+
+def test_get_people_metadata_uses_recognized_people(monkeypatch):
+    monkeypatch.setattr(
+        people,
+        "analyze_image_faces",
+        lambda _: [
+            {
+                "person_id": "person-1",
+                "similarity": 0.95,
+                "status": "matched",
+            },
+            {
+                "person_id": None,
+                "similarity": None,
+                "status": "unknown",
+            },
+        ],
+    )
+
+    monkeypatch.setattr(
+        people,
+        "get_person",
+        lambda person_id: {
+            "person_id": person_id,
+            "label": "Rahul",
+        },
+    )
+
+    result = people.get_people_metadata("photo.jpg")
+
+    assert result == {
+        "people": [
+            {
+                "person_id": "person-1",
+                "label": "Rahul",
+                "similarity": 0.95,
+            }
+        ]
+    }
