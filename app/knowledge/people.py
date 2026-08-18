@@ -154,43 +154,6 @@ def get_all_people():
 
     return [dict(row) for row in rows]
 
-def register_unknown_faces(file_path):
-    """
-    Detect all faces in an image and register each as an unknown person.
-
-    No identity is assigned automatically.
-    """
-    from knowledge.face import extract_faces
-
-    initialize_people_registry()
-
-    faces = extract_faces(file_path)
-    registered = []
-
-    for face in faces:
-        person_id = create_person(
-            label=None,
-            is_user=False,
-            status="unknown",
-        )
-
-        add_face_embedding(
-            person_id,
-            face["embedding"],
-            source_path=file_path,
-        )
-
-        registered.append(
-            {
-                "person_id": person_id,
-                "bbox": face["bbox"],
-                "det_score": face["det_score"],
-            }
-        )
-
-    return registered
-
-
 def match_face(embedding, threshold=None):
     """Match a face embedding against all stored face embeddings."""
 
