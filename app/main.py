@@ -178,6 +178,9 @@ def handle_query(query):
     if result.answer_type == "structured_files":
         return _format_structured_files(result)
 
+    if result.answer_type == "people":
+        return _format_people_result(result)
+
     # Follow-up query handling
     if result.answer_type == "unknown" and LAST_RESULT:
 
@@ -202,6 +205,20 @@ def handle_query(query):
         "I understood the request, but "
         "I don't have a tool for it yet."
     )
+
+def _format_people_result(result):
+    """Format media results associated with recognized people."""
+
+    if not result.data:
+        return "I couldn't find matching photos."
+
+    lines = ["I found these photos:"]
+
+    for index, item in enumerate(result.data, start=1):
+        source = item.get("source") or item.get("file_path", "Unknown")
+        lines.append(f"{index}. {source}")
+
+    return "\n".join(lines)
 
 
 def main():
