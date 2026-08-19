@@ -3,6 +3,8 @@ from retrieval.people_retriever import (
     retrieve_by_people,
 )
 
+from retrieval.multimodal_retriever import search_multimodal
+
 from query.router import (
     QueryResult,
     _file_discovery,
@@ -29,6 +31,18 @@ def execute_plan(query: str, plan: IntentPlan) -> QueryResult:
 
     if intent == "structured_discovery":
         return _structured_discovery(query)
+
+    if intent == "multimodal_search":
+
+
+        data = search_multimodal(query)
+
+        return QueryResult(
+            query=query,
+            intent=plan,
+            answer_type="multimodal",
+            data=data,
+        )
 
     if intent == "people_search":
         labels = args.person_labels
@@ -66,6 +80,8 @@ def execute_plan(query: str, plan: IntentPlan) -> QueryResult:
 
     if intent == "current_time":
         return _current_time(query)
+
+    
 
     return QueryResult(
         query=query,

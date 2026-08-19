@@ -150,6 +150,8 @@ people_search:
 Use when the user is asking to find, show, or retrieve media based on
 people/entities appearing in that media.
 
+multimodal_search: semantically search across documents and media when the request cannot be restricted to a single modality
+
 Extract the referenced person/entity names or labels into person_labels.
 Do not assume a fixed set of names or keywords.
 If multiple people are referenced, include all of them.

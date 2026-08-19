@@ -11,6 +11,7 @@ IntentName = Literal[
     "current_time",
     "people_search",
     "unknown",
+    "multimodal_search",
 ]
 
 
