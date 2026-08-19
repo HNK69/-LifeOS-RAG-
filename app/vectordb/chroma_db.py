@@ -180,6 +180,7 @@ def store_media_description(
     description,
     embedding,
     people=None,
+    visual_metadata=None,
 ):
         """
         Store an image's vision description as a searchable Chroma document.
@@ -204,6 +205,8 @@ def store_media_description(
             "document_type": "media",
             "category": "image",
             "media_type": "image",
+            "visual_metadata": json.dumps(
+                visual_metadata or {}),
         }
 
         collection.upsert(

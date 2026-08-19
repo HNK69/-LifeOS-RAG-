@@ -30,7 +30,10 @@ from ingestion.structured.handler import handle_structured_file
 from vectordb.chroma_db import store_media_description
 
 
-from llm.generator import analyze_image
+from llm.generator import (
+    analyze_image,
+    analyze_image_metadata,
+)
 
 from knowledge.people import get_people_metadata
 
@@ -252,6 +255,7 @@ def ingest_file(file_path):
 
             if media_metadata["media_type"] == "image":
                 media_metadata["description"] = analyze_image(file_path)
+                media_metadata["visual_metadata"] = analyze_image_metadata(file_path)
 
                 description_embedding = generate_embeddings(
                     [media_metadata["description"]]

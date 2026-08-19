@@ -61,6 +61,19 @@ def test_image_ingestion_stores_people_metadata(
 
     monkeypatch.setattr(
         ingest,
+        "analyze_image_metadata",
+        lambda _: {
+            "objects": ["laptop"],
+            "locations": ["classroom"],
+            "activities": ["studying"],
+            "context": "A classroom study scene.",
+            "ocr": "DBMS",
+            "entities": ["laptop"],
+        },
+    )
+
+    monkeypatch.setattr(
+        ingest,
         "generate_embeddings",
         lambda _: [[0.1, 0.2, 0.3]],
     )
@@ -86,11 +99,13 @@ def test_image_ingestion_stores_people_metadata(
         description,
         embedding,
         people=None,
+        visual_metadata=None,
     ):
         stored["file_path"] = str(file_path)
         stored["description"] = description
         stored["embedding"] = embedding
         stored["people"] = people
+        stored["visual_metadata"] = visual_metadata
 
     monkeypatch.setattr(
         ingest,
@@ -128,3 +143,6 @@ def test_image_ingestion_stores_people_metadata(
     assert stored["people"][0]["label"] == "Rahul"
 
     assert registered["file_hash"] == "test-hash"
+
+    assert registered["metadata"]["visual_metadata"]["objects"] == ["laptop"]
+    assert registered["metadata"]["visual_metadata"]["locations"] == ["classroom"]

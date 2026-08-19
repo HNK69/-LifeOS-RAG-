@@ -1,9 +1,9 @@
+from retrieval.multimodal_retriever import search_multimodal
 from retrieval.people_retriever import (
     retrieve_by_person,
     retrieve_by_people,
 )
 
-from retrieval.multimodal_retriever import search_multimodal
 
 from query.router import (
     QueryResult,
@@ -33,7 +33,6 @@ def execute_plan(query: str, plan: IntentPlan) -> QueryResult:
         return _structured_discovery(query)
 
     if intent == "multimodal_search":
-
 
         data = search_multimodal(query)
 

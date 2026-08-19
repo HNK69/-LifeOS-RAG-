@@ -155,3 +155,61 @@ Do not invent details that are not visible.
     )
 
     return response.choices[0].message.content
+
+def analyze_image_metadata(file_path):
+    """
+    Extract structured, retrieval-oriented visual metadata.
+
+    The vision model determines the entities/context; LifeOS does not
+    hardcode object, location, or activity categories.
+    """
+    prompt = """
+Analyze this image for LifeOS memory.
+
+Return ONLY valid JSON with this schema:
+
+{
+  "objects": [],
+  "locations": [],
+  "activities": [],
+  "context": "",
+  "ocr": "",
+  "entities": []
+}
+
+Rules:
+- objects: visually identifiable objects or items.
+- locations: locations or environmental settings only when supported.
+- activities: visible activities/actions only when supported.
+- context: concise useful contextual description.
+- ocr: readable text only; use "" when none is readable.
+- entities: distinctive identifiable entities relevant for retrieval.
+- Use empty arrays/strings when information is unavailable.
+- Never invent details.
+"""
+
+    raw = analyze_image(
+        file_path,
+        prompt=prompt,
+    )
+
+    try:
+        metadata = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return {
+            "objects": [],
+            "locations": [],
+            "activities": [],
+            "context": "",
+            "ocr": "",
+            "entities": [],
+        }
+
+    return {
+        "objects": metadata.get("objects", []),
+        "locations": metadata.get("locations", []),
+        "activities": metadata.get("activities", []),
+        "context": metadata.get("context", ""),
+        "ocr": metadata.get("ocr", ""),
+        "entities": metadata.get("entities", []),
+    }
