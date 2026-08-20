@@ -109,7 +109,7 @@ def test_search_multimodal_generates_query_embedding(monkeypatch):
 
     result = search_multimodal("photos from college", top_k=5)
 
-    assert len(result) == 1
-    assert result[0]["source"] == "photo.jpg"
-    assert result[0]["distance"] == 0.1
-    assert "resolution_score" in result[0]
+    assert result["ambiguous"] is False
+    assert result["selected"]["source"] == "photo.jpg"
+    assert result["candidates"][0]["source"] == "photo.jpg"
+    assert result["candidates"][0]["resolution_score"] > 0

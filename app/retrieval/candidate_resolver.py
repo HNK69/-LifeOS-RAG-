@@ -57,3 +57,58 @@ def resolve_candidates(query, candidates, top_k=20):
     )
 
     return scored[:top_k]
+
+def resolve_with_ambiguity(
+    query,
+    candidates,
+    top_k=20,
+    confidence_threshold=0.5,
+    margin_threshold=0.1,
+):
+    """
+    Resolve candidates while explicitly detecting ambiguity.
+
+    Returns:
+        {
+            "candidates": [...],
+            "selected": ...,
+            "ambiguous": bool,
+        }
+    """
+    ranked = resolve_candidates(
+        query,
+        candidates,
+        top_k=top_k,
+    )
+
+    if not ranked:
+        return {
+            "candidates": [],
+            "selected": None,
+            "ambiguous": False,
+        }
+
+    top_score = ranked[0]["resolution_score"]
+
+    if top_score < confidence_threshold:
+        return {
+            "candidates": ranked,
+            "selected": None,
+            "ambiguous": True,
+        }
+
+    if len(ranked) > 1:
+        second_score = ranked[1]["resolution_score"]
+
+        if top_score - second_score < margin_threshold:
+            return {
+                "candidates": ranked,
+                "selected": None,
+                "ambiguous": True,
+            }
+
+    return {
+        "candidates": ranked,
+        "selected": ranked[0],
+        "ambiguous": False,
+    }

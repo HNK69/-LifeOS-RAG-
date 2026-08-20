@@ -1,7 +1,7 @@
 from embeddings.embedder import generate_embeddings
 from vectordb.chroma_db import collection
 from retrieval.candidate_resolver import resolve_candidates
-
+from retrieval.candidate_resolver import resolve_with_ambiguity
 
 def retrieve_multimodal(embedding, top_k=20):
     if embedding is None:
@@ -39,7 +39,11 @@ def retrieve_multimodal(embedding, top_k=20):
 def search_multimodal(query, top_k=20):
     """Search and resolve candidates across LifeOS knowledge."""
     if not str(query).strip():
-        return []
+        return {
+            "candidates": [],
+            "selected": None,
+            "ambiguous": False,
+        }
 
     embedding = generate_embeddings([query])[0]
 
@@ -48,7 +52,7 @@ def search_multimodal(query, top_k=20):
         top_k=top_k,
     )
 
-    return resolve_candidates(
+    return resolve_with_ambiguity(
         query,
         candidates,
         top_k=top_k,
