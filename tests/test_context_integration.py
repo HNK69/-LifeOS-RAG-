@@ -33,3 +33,36 @@ def test_schedule_query_includes_active_personal_context(monkeypatch):
     )
 
     clear_context()
+
+def test_schedule_query_passes_personal_context_to_classifier(monkeypatch):
+    clear_context()
+
+    set_context(
+        "current_class",
+        "DBMS",
+        context_type="schedule",
+        valid_from="2000-01-01T00:00:00+00:00",
+    )
+
+    captured = {}
+
+    def fake_classify_sources(query, current_context, candidates):
+        captured["context"] = current_context
+        return '{"candidates": []}'
+
+    monkeypatch.setattr(
+        router,
+        "classify_sources",
+        fake_classify_sources,
+    )
+
+    router._schedule_query("Which class do I have now?")
+
+    assert "personal_context" in captured["context"]
+    assert (
+        captured["context"]["personal_context"]["context"]
+        ["current_class"]["value"]
+        == "DBMS"
+    )
+
+    clear_context()

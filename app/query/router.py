@@ -526,21 +526,7 @@ def _execute_structured_query(
 # ---------------------------------------------------------------------
 
 def _schedule_query(query: str) -> QueryResult:
-    now = datetime.now()
-
-    schedule_context = {
-        "current_datetime": now.isoformat(),
-        "date": now.date().isoformat(),
-        "time": now.strftime("%H:%M:%S"),
-        "weekday": now.strftime("%A"),
-    }
-
-    active_context = compose_context(
-        query,
-        datetime.now().astimezone(),
-    )
-
-    schedule_context["personal_context"] = active_context
+    schedule_context = _build_schedule_context(query)
 
     retrieval_query = (
         f"{query}\n"
@@ -654,3 +640,20 @@ def _current_time(
             "weekday": now.strftime("%A"),
         },
     )
+
+def _build_schedule_context(query):
+    now = datetime.now()
+
+    context = {
+        "current_datetime": now.isoformat(),
+        "date": now.date().isoformat(),
+        "time": now.strftime("%H:%M:%S"),
+        "weekday": now.strftime("%A"),
+    }
+
+    context["personal_context"] = compose_context(
+        query,
+        datetime.now().astimezone(),
+    )
+
+    return context
