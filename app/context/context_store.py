@@ -117,3 +117,29 @@ def clear_context():
     with _connect() as connection:
         connection.execute("DELETE FROM context")
         connection.commit()
+
+def get_context_by_type(context_type):
+    if not context_type or not str(context_type).strip():
+        raise ValueError("Context type cannot be empty.")
+
+    initialize_context_store()
+
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT key, value, context_type, updated_at
+            FROM context
+            WHERE context_type = ?
+            ORDER BY key
+            """,
+            (str(context_type),),
+        ).fetchall()
+
+    return {
+        row["key"]: {
+            "value": row["value"],
+            "context_type": row["context_type"],
+            "updated_at": row["updated_at"],
+        }
+        for row in rows
+    }

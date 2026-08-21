@@ -3,6 +3,7 @@ from app.context.context_store import (
     get_context,
     get_all_context,
     clear_context,
+    get_context_by_type,
 )
 
 
@@ -59,5 +60,20 @@ def test_typed_context():
 
     assert context["study_time"]["value"] == "8 PM"
     assert context["study_time"]["context_type"] == "routine"
+
+    clear_context()
+
+def test_get_context_by_type():
+    clear_context()
+
+    set_context("study_time", "8 PM", context_type="routine")
+    set_context("theme", "dark", context_type="preference")
+
+    routines = get_context_by_type("routine")
+
+    assert "study_time" in routines
+    assert routines["study_time"]["value"] == "8 PM"
+    assert routines["study_time"]["context_type"] == "routine"
+    assert "theme" not in routines
 
     clear_context()
