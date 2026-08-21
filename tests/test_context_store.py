@@ -8,6 +8,7 @@ from app.context.context_store import (
     get_active_context,
     get_relevant_context,
     compose_context,
+    resolve_context_conflicts,
 )
 
 
@@ -205,3 +206,22 @@ def test_compose_context_groups_by_type():
     assert result["by_type"]["preference"]["study_style"]["value"] == "deep work"
 
     clear_context()
+
+def test_context_conflict_resolution():
+    context = {
+        "study_mode": {
+            "value": "casual",
+            "context_type": "general",
+            "updated_at": "2026-08-21T08:00:00+00:00",
+        },
+        "study_mode_specific": {
+            "value": "deep",
+            "context_type": "routine",
+            "updated_at": "2026-08-21T07:00:00+00:00",
+        },
+    }
+
+    resolved = resolve_context_conflicts(context)
+
+    assert resolved["study_mode"]["value"] == "casual"
+    assert resolved["study_mode_specific"]["value"] == "deep"

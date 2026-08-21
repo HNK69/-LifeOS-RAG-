@@ -276,7 +276,7 @@ def get_relevant_context(query, at_time=None):
 def compose_context(query, at_time=None):
     """Build the structured personal context relevant to a query."""
     relevant = get_relevant_context(query, at_time)
-
+    relevant = resolve_context_conflicts(relevant)
     by_type = {}
 
     for key, item in relevant.items():
@@ -290,3 +290,40 @@ def compose_context(query, at_time=None):
         "by_type": by_type,
         "count": len(relevant),
     }
+
+def resolve_context_conflicts(context):
+    """Resolve conflicting context entries deterministically."""
+    precedence = {
+        "general": 0,
+        "preference": 1,
+        "routine": 2,
+        "schedule": 3,
+        "goal": 4,
+    }
+
+    resolved = {}
+
+    for key, item in context.items():
+        current = resolved.get(key)
+
+        if current is None:
+            resolved[key] = item
+            continue
+
+        current_priority = precedence.get(
+            current["context_type"],
+            0,
+        )
+
+        new_priority = precedence.get(
+            item["context_type"],
+            0,
+        )
+
+        if new_priority > current_priority:
+            resolved[key] = item
+        elif new_priority == current_priority:
+            if item["updated_at"] > current["updated_at"]:
+                resolved[key] = item
+
+    return resolved
