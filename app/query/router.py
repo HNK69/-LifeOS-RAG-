@@ -23,6 +23,7 @@ No dataset/document names are hard-coded.
 """
 
 from __future__ import annotations
+from context.context_store import get_active_context
 
 import json
 from dataclasses import dataclass
@@ -530,6 +531,12 @@ def _schedule_query(query: str) -> QueryResult:
         "time": now.strftime("%H:%M:%S"),
         "weekday": now.strftime("%A"),
     }
+
+    active_context = get_active_context(
+    datetime.now().astimezone()
+    )
+
+    schedule_context["personal_context"] = active_context
 
     retrieval_query = (
         f"{query}\n"
