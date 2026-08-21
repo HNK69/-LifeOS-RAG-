@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/lifeos-hero.png" alt="LifeOS — Personal AI Operating System">
+  <img src="assets/LifeOS.png" alt="LifeOS — Personal AI Operating System">
 </p>
 
 # LifeOS
