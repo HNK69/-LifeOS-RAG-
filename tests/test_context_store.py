@@ -1,9 +1,11 @@
+from datetime import datetime
 from app.context.context_store import (
     set_context,
     get_context,
     get_all_context,
     clear_context,
     get_context_by_type,
+    get_active_context,
 )
 
 
@@ -94,5 +96,44 @@ def test_temporal_context():
     assert context["study_class"]["value"] == "DBMS"
     assert context["study_class"]["valid_from"] == "2026-08-21T08:00:00+05:30"
     assert context["study_class"]["valid_until"] == "2026-08-21T10:00:00+05:30"
+
+    clear_context()
+
+def test_active_context():
+    clear_context()
+
+    set_context(
+        "current_class",
+        "DBMS",
+        context_type="schedule",
+        valid_from="2026-08-21T08:00:00+05:30",
+        valid_until="2026-08-21T10:00:00+05:30",
+    )
+
+    active = get_active_context(
+        datetime.fromisoformat("2026-08-21T09:00:00+05:30")
+    )
+
+    assert active["current_class"]["value"] == "DBMS"
+
+    clear_context()
+
+
+def test_inactive_context_is_excluded():
+    clear_context()
+
+    set_context(
+        "current_class",
+        "DBMS",
+        context_type="schedule",
+        valid_from="2026-08-21T08:00:00+05:30",
+        valid_until="2026-08-21T10:00:00+05:30",
+    )
+
+    active = get_active_context(
+        datetime.fromisoformat("2026-08-21T11:00:00+05:30")
+    )
+
+    assert "current_class" not in active
 
     clear_context()

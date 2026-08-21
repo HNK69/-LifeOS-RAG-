@@ -2,6 +2,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+
 from app.config import DATA_DIR
 
 
@@ -200,3 +201,39 @@ def clear_context():
     with _connect() as connection:
         connection.execute("DELETE FROM context")
         connection.commit()
+
+def get_active_context(at_time=None):
+    """Return context entries active at the supplied timestamp."""
+    initialize_context_store()
+
+    if at_time is None:
+        at_time = datetime.now(timezone.utc)
+
+    if at_time.tzinfo is None:
+        at_time = at_time.replace(tzinfo=timezone.utc)
+
+    timestamp = at_time.isoformat()
+
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT key, value, context_type, updated_at,
+                   valid_from, valid_until
+            FROM context
+            WHERE (valid_from IS NULL OR valid_from <= ?)
+              AND (valid_until IS NULL OR valid_until >= ?)
+            ORDER BY key
+            """,
+            (timestamp, timestamp),
+        ).fetchall()
+
+    return {
+        row["key"]: {
+            "value": row["value"],
+            "context_type": row["context_type"],
+            "updated_at": row["updated_at"],
+            "valid_from": row["valid_from"],
+            "valid_until": row["valid_until"],
+        }
+        for row in rows
+    }
