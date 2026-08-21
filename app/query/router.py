@@ -23,7 +23,7 @@ No dataset/document names are hard-coded.
 """
 
 from __future__ import annotations
-from context.context_store import get_active_context
+
 
 import json
 from dataclasses import dataclass
@@ -38,6 +38,7 @@ from retrieval.reranker import rerank
 from embeddings.embedder import generate_embeddings
 from vectordb.chroma_db import collection
 
+from context.context_store import get_relevant_context
 
 from knowledge.registry_api import find_documents
 from retrieval.retriever import retrieve, retrieve_chunks
@@ -532,8 +533,9 @@ def _schedule_query(query: str) -> QueryResult:
         "weekday": now.strftime("%A"),
     }
 
-    active_context = get_active_context(
-    datetime.now().astimezone()
+    active_context = get_relevant_context(
+        query,
+        datetime.now().astimezone(),
     )
 
     schedule_context["personal_context"] = active_context

@@ -237,3 +237,38 @@ def get_active_context(at_time=None):
         }
         for row in rows
     }
+
+def get_relevant_context(query, at_time=None):
+    """Return active context entries relevant to the supplied query."""
+    active = get_active_context(at_time)
+
+    query_terms = {
+        term.lower()
+        for term in str(query).replace("/", " ").split()
+        if len(term) > 2
+    }
+
+    relevant = {}
+
+    for key, item in active.items():
+        searchable = " ".join(
+            [
+                str(key),
+                str(item["value"]),
+                str(item["context_type"]),
+            ]
+        ).lower()
+
+        score = sum(
+            1
+            for term in query_terms
+            if term in searchable
+        )
+
+        if score > 0:
+            relevant[key] = {
+                **item,
+                "relevance_score": score,
+            }
+
+    return relevant

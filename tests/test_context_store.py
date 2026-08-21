@@ -6,6 +6,7 @@ from app.context.context_store import (
     clear_context,
     get_context_by_type,
     get_active_context,
+    get_relevant_context,
 )
 
 
@@ -154,5 +155,28 @@ def test_active_context_integrates_with_schedule_time():
     )
 
     assert active["current_class"]["value"] == "DBMS"
+
+    clear_context()
+
+def test_relevant_context_filters_unrelated_context():
+    clear_context()
+
+    set_context(
+        "current_class",
+        "DBMS",
+        context_type="schedule",
+    )
+
+    set_context(
+        "favorite_food",
+        "pizza",
+        context_type="preference",
+    )
+
+    relevant = get_relevant_context("Which class do I have now?")
+
+    assert "current_class" in relevant
+    assert "favorite_food" not in relevant
+    assert relevant["current_class"]["relevance_score"] > 0
 
     clear_context()
