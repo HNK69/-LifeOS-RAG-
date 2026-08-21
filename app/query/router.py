@@ -39,6 +39,8 @@ from embeddings.embedder import generate_embeddings
 from vectordb.chroma_db import collection
 
 from context.context_store import get_relevant_context
+from context.context_store import compose_context
+
 
 from knowledge.registry_api import find_documents
 from retrieval.retriever import retrieve, retrieve_chunks
@@ -533,7 +535,7 @@ def _schedule_query(query: str) -> QueryResult:
         "weekday": now.strftime("%A"),
     }
 
-    active_context = get_relevant_context(
+    active_context = compose_context(
         query,
         datetime.now().astimezone(),
     )

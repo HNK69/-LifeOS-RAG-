@@ -20,6 +20,10 @@ def test_schedule_query_includes_active_personal_context(monkeypatch):
 
     result = router._schedule_query("Which class do I have now?")
 
-    assert result.data["time_context"]["personal_context"]["current_class"]["value"] == "DBMS"
+    assert (
+        result.data["time_context"]["personal_context"]["context"]
+        ["current_class"]["value"]
+        == "DBMS"
+    )
 
     clear_context()

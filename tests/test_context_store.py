@@ -7,6 +7,7 @@ from app.context.context_store import (
     get_context_by_type,
     get_active_context,
     get_relevant_context,
+    compose_context,
 )
 
 
@@ -178,5 +179,29 @@ def test_relevant_context_filters_unrelated_context():
     assert "current_class" in relevant
     assert "favorite_food" not in relevant
     assert relevant["current_class"]["relevance_score"] > 0
+
+    clear_context()
+
+def test_compose_context_groups_by_type():
+    clear_context()
+
+    set_context(
+        "current_class",
+        "DBMS",
+        context_type="schedule",
+    )
+
+    set_context(
+        "study_style",
+        "deep work",
+        context_type="preference",
+    )
+
+    result = compose_context("class study")
+
+    assert result["count"] == 2
+    assert result["context"]["current_class"]["value"] == "DBMS"
+    assert result["by_type"]["schedule"]["current_class"]["value"] == "DBMS"
+    assert result["by_type"]["preference"]["study_style"]["value"] == "deep work"
 
     clear_context()

@@ -272,3 +272,21 @@ def get_relevant_context(query, at_time=None):
             }
 
     return relevant
+
+def compose_context(query, at_time=None):
+    """Build the structured personal context relevant to a query."""
+    relevant = get_relevant_context(query, at_time)
+
+    by_type = {}
+
+    for key, item in relevant.items():
+        context_type = item["context_type"]
+
+        by_type.setdefault(context_type, {})[key] = item
+
+    return {
+        "query": str(query),
+        "context": relevant,
+        "by_type": by_type,
+        "count": len(relevant),
+    }
