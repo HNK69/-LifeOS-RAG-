@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/lifeos-hero.png" alt="LifeOS — Personal AI Operating System">
+</p>
+
 # LifeOS
 
 > **A personal AI operating system that evolves from document retrieval into personal context, identity, reasoning, and eventually agentic assistance.**
