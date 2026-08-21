@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime,timezone
 from app.context.context_store import (
     set_context,
     get_context,
@@ -225,3 +225,40 @@ def test_context_conflict_resolution():
 
     assert resolved["study_mode"]["value"] == "casual"
     assert resolved["study_mode_specific"]["value"] == "deep"
+
+def test_stale_context_is_filtered():
+    clear_context()
+
+    set_context(
+        "current_location",
+        "college",
+        context_type="location",
+    )
+
+    import app.context.context_store as store
+
+    stale_time = datetime.now(timezone.utc)
+
+    with store._connect() as connection:
+        connection.execute(
+            """
+            UPDATE context
+            SET updated_at = ?
+            WHERE key = ?
+            """,
+            (
+                "2020-01-01T00:00:00+00:00",
+                "current_location",
+            ),
+        )
+        connection.commit()
+
+    relevant = get_relevant_context(
+        "current location college",
+        at_time=stale_time,
+        max_age_seconds=3600,
+    )
+
+    assert "current_location" not in relevant
+
+    clear_context()

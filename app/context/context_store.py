@@ -238,9 +238,19 @@ def get_active_context(at_time=None):
         for row in rows
     }
 
-def get_relevant_context(query, at_time=None):
-    """Return active context entries relevant to the supplied query."""
+def get_relevant_context(
+    query,
+    at_time=None,
+    max_age_seconds=None,
+):
+    """Return active and relevant context, optionally filtered by freshness."""
     active = get_active_context(at_time)
+
+    if at_time is None:
+        at_time = datetime.now(timezone.utc)
+
+    if at_time.tzinfo is None:
+        at_time = at_time.replace(tzinfo=timezone.utc)
 
     query_terms = {
         term.lower()
@@ -251,6 +261,23 @@ def get_relevant_context(query, at_time=None):
     relevant = {}
 
     for key, item in active.items():
+        if max_age_seconds is not None:
+            updated_at = datetime.fromisoformat(
+                item["updated_at"]
+            )
+
+            if updated_at.tzinfo is None:
+                updated_at = updated_at.replace(
+                    tzinfo=timezone.utc
+                )
+
+            age_seconds = (
+                at_time - updated_at
+            ).total_seconds()
+
+            if age_seconds > max_age_seconds:
+                continue
+
         searchable = " ".join(
             [
                 str(key),

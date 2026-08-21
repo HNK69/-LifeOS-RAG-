@@ -18,6 +18,12 @@ def test_schedule_query_includes_active_personal_context(monkeypatch):
         __import__("datetime").datetime,
     )
 
+    monkeypatch.setattr(
+        router,
+        "classify_sources",
+        lambda query, context, candidates: '{"candidates": []}',
+    )
+
     result = router._schedule_query("Which class do I have now?")
 
     assert (
