@@ -77,3 +77,22 @@ def test_get_context_by_type():
     assert "theme" not in routines
 
     clear_context()
+
+def test_temporal_context():
+    clear_context()
+
+    set_context(
+        "study_class",
+        "DBMS",
+        context_type="schedule",
+        valid_from="2026-08-21T08:00:00+05:30",
+        valid_until="2026-08-21T10:00:00+05:30",
+    )
+
+    context = get_all_context()
+
+    assert context["study_class"]["value"] == "DBMS"
+    assert context["study_class"]["valid_from"] == "2026-08-21T08:00:00+05:30"
+    assert context["study_class"]["valid_until"] == "2026-08-21T10:00:00+05:30"
+
+    clear_context()
