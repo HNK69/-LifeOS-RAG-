@@ -1,4 +1,10 @@
 import json
+from knowledge.entity_relationship import (
+    clear_entity_store,
+    create_entity,
+    find_entities,
+    get_relationships,
+)
 
 import knowledge.entity_extractor as extractor
 from knowledge.entity_relationship import (
@@ -183,5 +189,240 @@ def test_entity_storage_deduplicates_normalized_entities(
     )
 
     assert len(people) == 1
+
+    clear_entity_store()
+
+def test_extract_relationships(monkeypatch):
+    response = json.dumps(
+        {
+            "relationships": [
+                {
+                    "source": "Alice",
+                    "target": "Bob",
+                    "type": " Knows ",
+                    "confidence": 0.9,
+                    "metadata": {
+                        "source": "text",
+                    },
+                }
+            ]
+        }
+    )
+
+    monkeypatch.setattr(
+        extractor,
+        "generate_response",
+        lambda prompt: response,
+    )
+
+    entities = [
+        {
+            "name": "Alice",
+            "type": "person",
+            "attributes": {},
+        },
+        {
+            "name": "Bob",
+            "type": "person",
+            "attributes": {},
+        },
+    ]
+
+    result = extractor.extract_relationships(
+        "Alice knows Bob.",
+        entities,
+    )
+
+    assert len(result) == 1
+    assert result[0]["source"] == "Alice"
+    assert result[0]["target"] == "Bob"
+    assert result[0]["type"] == "knows"
+    assert result[0]["confidence"] == 0.9
+
+
+def test_extract_relationships_rejects_unknown_entities(
+    monkeypatch,
+):
+    response = json.dumps(
+        {
+            "relationships": [
+                {
+                    "source": "Alice",
+                    "target": "Unknown",
+                    "type": "knows",
+                    "confidence": 1.0,
+                    "metadata": {},
+                }
+            ]
+        }
+    )
+
+    monkeypatch.setattr(
+        extractor,
+        "generate_response",
+        lambda prompt: response,
+    )
+
+    entities = [
+        {
+            "name": "Alice",
+            "type": "person",
+            "attributes": {},
+        }
+    ]
+
+    result = extractor.extract_relationships(
+        "Alice knows someone.",
+        entities,
+    )
+
+    assert result == []
+
+
+def test_extract_relationships_rejects_self_relationship(
+    monkeypatch,
+):
+    response = json.dumps(
+        {
+            "relationships": [
+                {
+                    "source": "Alice",
+                    "target": "Alice",
+                    "type": "knows",
+                    "confidence": 1.0,
+                    "metadata": {},
+                }
+            ]
+        }
+    )
+
+    monkeypatch.setattr(
+        extractor,
+        "generate_response",
+        lambda prompt: response,
+    )
+
+    entities = [
+        {
+            "name": "Alice",
+            "type": "person",
+            "attributes": {},
+        }
+    ]
+
+    result = extractor.extract_relationships(
+        "Alice knows Alice.",
+        entities,
+    )
+
+    assert result == []
+
+
+def test_extract_relationships_validates_confidence(
+    monkeypatch,
+):
+    response = json.dumps(
+        {
+            "relationships": [
+                {
+                    "source": "Alice",
+                    "target": "Bob",
+                    "type": "knows",
+                    "confidence": 2.0,
+                    "metadata": {},
+                }
+            ]
+        }
+    )
+
+    monkeypatch.setattr(
+        extractor,
+        "generate_response",
+        lambda prompt: response,
+    )
+
+    entities = [
+        {
+            "name": "Alice",
+            "type": "person",
+            "attributes": {},
+        },
+        {
+            "name": "Bob",
+            "type": "person",
+            "attributes": {},
+        },
+    ]
+
+    result = extractor.extract_relationships(
+        "Alice knows Bob.",
+        entities,
+    )
+
+    assert result == []
+
+
+def test_extract_and_store_relationships(monkeypatch):
+    clear_entity_store()
+
+    create_entity = __import__(
+        "knowledge.entity_relationship",
+        fromlist=["create_entity"],
+    ).create_entity
+
+    alice = create_entity("person", "Alice")
+    bob = create_entity("person", "Bob")
+
+    response = json.dumps(
+        {
+            "relationships": [
+                {
+                    "source": "Alice",
+                    "target": "Bob",
+                    "type": "knows",
+                    "confidence": 0.95,
+                    "metadata": {
+                        "source": "test",
+                    },
+                }
+            ]
+        }
+    )
+
+    monkeypatch.setattr(
+        extractor,
+        "generate_response",
+        lambda prompt: response,
+    )
+
+    entities = [
+        {
+            "name": "Alice",
+            "type": "person",
+            "attributes": {},
+        },
+        {
+            "name": "Bob",
+            "type": "person",
+            "attributes": {},
+        },
+    ]
+
+    stored = extractor.extract_and_store_relationships(
+        "Alice knows Bob.",
+        entities,
+    )
+
+    assert len(stored) == 1
+    assert stored[0]["relationship_type"] == "knows"
+    assert stored[0]["confidence"] == 0.95
+
+    relationships = get_relationships(
+        alice["id"],
+        direction="outgoing",
+    )
+
+    assert len(relationships) == 1
+    assert relationships[0]["target"]["canonical_name"] == "Bob"
 
     clear_entity_store()

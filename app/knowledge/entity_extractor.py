@@ -131,3 +131,210 @@ def extract_and_store_entities(text):
         )
 
     return stored
+
+def _normalize_relationship_type(relationship_type):
+    """Normalize an extracted relationship type deterministically."""
+    relationship_type = str(relationship_type).strip().lower()
+    relationship_type = re.sub(r"\s+", "_", relationship_type)
+
+    if not relationship_type:
+        raise ValueError("Relationship type cannot be empty.")
+
+    return relationship_type
+
+
+def _build_relationship_prompt(text, entities):
+    return f"""
+Extract meaningful relationships between the entities explicitly supported
+by the following text.
+
+Text:
+{text}
+
+Known entities:
+{json.dumps(entities, ensure_ascii=False)}
+
+For every relationship return:
+- source: exact entity name from the known entities
+- target: exact entity name from the known entities
+- type: relationship type
+- confidence: number from 0 to 1
+- metadata: JSON object
+
+Rules:
+- Do not invent entities.
+- Do not create relationships involving entities outside the known entities.
+- Do not infer relationships that are not supported by the text.
+- Use exact entity names from the known entities.
+- Keep relationship types short and general.
+- Return only valid JSON.
+
+Expected format:
+
+{{
+  "relationships": [
+    {{
+      "source": "Alice",
+      "target": "Bob",
+      "type": "knows",
+      "confidence": 0.95,
+      "metadata": {{}}
+    }}
+  ]
+}}
+"""
+
+
+def extract_relationships(text, entities=None):
+    """Extract normalized relationship candidates from text."""
+    if not text or not str(text).strip():
+        return []
+
+    if entities is None:
+        entities = extract_entities(text)
+
+    if not entities:
+        return []
+
+    response = generate_response(
+        _build_relationship_prompt(
+            str(text),
+            entities,
+        )
+    )
+
+    if not response:
+        return []
+
+    try:
+        payload = json.loads(response)
+    except json.JSONDecodeError:
+        return []
+
+    relationships = payload.get("relationships", [])
+
+    if not isinstance(relationships, list):
+        return []
+
+    known_names = {
+        entity["name"]
+        for entity in entities
+        if isinstance(entity, dict) and entity.get("name")
+    }
+
+    normalized = []
+
+    for relationship in relationships:
+        if not isinstance(relationship, dict):
+            continue
+
+        source = relationship.get("source")
+        target = relationship.get("target")
+        relationship_type = relationship.get("type")
+        confidence = relationship.get("confidence", 1.0)
+        metadata = relationship.get("metadata", {})
+
+        if not source or not target or not relationship_type:
+            continue
+
+        if source not in known_names or target not in known_names:
+            continue
+
+        if source == target:
+            continue
+
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        try:
+            confidence = float(confidence)
+        except (TypeError, ValueError):
+            continue
+
+        if not 0.0 <= confidence <= 1.0:
+            continue
+
+        try:
+            normalized.append(
+                {
+                    "source": _normalize_name(source),
+                    "target": _normalize_name(target),
+                    "type": _normalize_relationship_type(
+                        relationship_type
+                    ),
+                    "confidence": confidence,
+                    "metadata": metadata,
+                }
+            )
+        except ValueError:
+            continue
+
+    return normalized
+
+
+def extract_and_store_relationships(
+    text,
+    entities=None,
+):
+    """Extract relationships and persist them through the entity store."""
+    from knowledge.entity_relationship import (
+        create_relationship,
+        find_entities,
+    )
+
+    if entities is None:
+        entities = extract_entities(text)
+
+    relationships = extract_relationships(
+        text,
+        entities,
+    )
+
+    stored = []
+
+    for relationship in relationships:
+        source_matches = find_entities(
+            name=relationship["source"],
+        )
+
+        target_matches = find_entities(
+            name=relationship["target"],
+        )
+
+        if not source_matches or not target_matches:
+            continue
+
+        source = next(
+            (
+                entity
+                for entity in source_matches
+                if entity["canonical_name"]
+                == relationship["source"]
+            ),
+            None,
+        )
+
+        target = next(
+            (
+                entity
+                for entity in target_matches
+                if entity["canonical_name"]
+                == relationship["target"]
+            ),
+            None,
+        )
+
+        if source is None or target is None:
+            continue
+
+        stored.append(
+            create_relationship(
+                source["id"],
+                target["id"],
+                relationship["type"],
+                confidence=relationship["confidence"],
+                metadata=relationship["metadata"],
+            )
+        )
+
+    return stored
