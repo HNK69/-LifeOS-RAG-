@@ -300,22 +300,81 @@ def get_relevant_context(
 
     return relevant
 
+def _get_relationship_context(query):
+    """Retrieve relationships for entity names explicitly present in the query."""
+    from knowledge.relationship_retriever import (
+        retrieve_relationships,
+    )
+
+    relationships = []
+
+    words = [
+        term.strip(".,?!:;()[]{}\"'")
+        for term in str(query).split()
+    ]
+
+    candidates = []
+
+    for index, word in enumerate(words):
+        if len(word) <= 2:
+            continue
+
+        candidate = word
+
+        # Preserve simple multi-word names such as "Alice Smith".
+        if index + 1 < len(words):
+            next_word = words[index + 1].strip(
+                ".,?!:;()[]{}\"'"
+            )
+
+            if len(next_word) > 2:
+                candidates.append(
+                    f"{candidate} {next_word}"
+                )
+
+        candidates.append(candidate)
+
+    seen = set()
+
+    for entity_name in candidates:
+        normalized = entity_name.lower()
+
+        if normalized in seen:
+            continue
+
+        seen.add(normalized)
+
+        matches = retrieve_relationships(
+            entity_name=entity_name,
+            direction="both",
+        )
+
+        for relationship in matches:
+            if relationship not in relationships:
+                relationships.append(relationship)
+
+    return relationships
+
 def compose_context(query, at_time=None):
-    """Build the structured personal context relevant to a query."""
+    """Build structured personal and relationship context relevant to a query."""
     relevant = get_relevant_context(query, at_time)
     relevant = resolve_context_conflicts(relevant)
+
     by_type = {}
 
     for key, item in relevant.items():
         context_type = item["context_type"]
-
         by_type.setdefault(context_type, {})[key] = item
+
+    relationship_context = _get_relationship_context(query)
 
     return {
         "query": str(query),
         "context": relevant,
         "by_type": by_type,
+        "relationships": relationship_context,
         "count": len(relevant),
+        "relationship_count": len(relationship_context),
     }
 
 def resolve_context_conflicts(context):
