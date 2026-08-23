@@ -10,6 +10,7 @@ IntentName = Literal[
     "schedule_query",
     "current_time",
     "people_search",
+    "relationship_search",
     "unknown",
     "multimodal_search",
 ]
@@ -25,6 +26,14 @@ class StructuredArguments(BaseModel):
     descending: bool = False
     limit: int = Field(default=10, ge=1, le=100)
     person_labels: list[str] = Field(default_factory=list)
+    entity_name: str | None = None
+    entity_type: str | None = None
+    relationship_type: str | None = None
+    direction: Literal[
+        "outgoing",
+        "incoming",
+        "both",
+    ] = "both"
 
     @field_validator("operation", mode="before")
     @classmethod

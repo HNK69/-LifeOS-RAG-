@@ -156,6 +156,23 @@ Extract the referenced person/entity names or labels into person_labels.
 Do not assume a fixed set of names or keywords.
 If multiple people are referenced, include all of them.
 
+relationship_search:
+Use when the user asks about relationships between known entities,
+such as who someone knows, works with, studies with, belongs to,
+is connected to, or is related to.
+
+Extract:
+- entity_name
+- optional entity_type
+- optional relationship_type
+- optional direction
+
+Use direction "outgoing" when asking what relationships an entity has
+toward others, "incoming" when asking who relates to that entity,
+and "both" when direction is ambiguous.
+
+Do not invent entities or relationships.
+
 Return:
 {
   "intent": "...",

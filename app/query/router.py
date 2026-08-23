@@ -40,6 +40,7 @@ from vectordb.chroma_db import collection
 
 from context.context_store import get_relevant_context
 from context.context_store import compose_context
+from knowledge.relationship_retriever import retrieve_relationships
 
 
 from knowledge.registry_api import find_documents
@@ -657,3 +658,41 @@ def _build_schedule_context(query):
     )
 
     return context
+
+def _relationship_search(query: str, arguments: dict[str, Any]) -> QueryResult:
+    entity_name = arguments.get("entity_name")
+
+    if not entity_name:
+        return QueryResult(
+            query=query,
+            intent=QueryIntent(
+                "relationship_search",
+                1.0,
+                arguments,
+            ),
+            answer_type="relationships",
+            data=[],
+        )
+
+    relationships = retrieve_relationships(
+        entity_name=entity_name,
+        entity_type=arguments.get("entity_type"),
+        relationship_type=arguments.get(
+            "relationship_type"
+        ),
+        direction=arguments.get(
+            "direction",
+            "both",
+        ),
+    )
+
+    return QueryResult(
+        query=query,
+        intent=QueryIntent(
+            "relationship_search",
+            1.0,
+            arguments,
+        ),
+        answer_type="relationships",
+        data=relationships,
+    )

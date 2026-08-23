@@ -14,6 +14,7 @@ from query.router import (
     _schedule_query,
     _current_time,
 )
+from query.router import _relationship_search
 
 from .models import IntentPlan
 from .planner import plan_query
@@ -64,6 +65,14 @@ def execute_plan(query: str, plan: IntentPlan) -> QueryResult:
             intent=plan,
             answer_type="people",
             data=data,
+        )
+
+    if intent == "relationship_search":
+        data = args.model_dump(exclude_none=True)
+
+        return _relationship_search(
+            query,
+            data,
         )
     
     if intent == "structured_query":
