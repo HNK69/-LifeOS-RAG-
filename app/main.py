@@ -242,7 +242,7 @@ def _format_reasoning_result(result):
 
     return reason(
         result.query,
-        evidence,
+        result,
     )
 
 
