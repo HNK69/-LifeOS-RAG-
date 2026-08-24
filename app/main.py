@@ -18,6 +18,8 @@ User-facing answer
 import sys
 from pathlib import Path
 
+from reasoning.engine import reason
+
 if __package__ is None:
     sys.path.insert(
         0,
@@ -158,6 +160,14 @@ def handle_query(query):
 
         LAST_RESULT = result
 
+    if result.answer_type in {
+        "relationships",
+        "multimodal",
+        "structured_result",
+        "schedule_context",
+    }:
+        return _format_reasoning_result(result)
+
     if result.answer_type == "files":
         LAST_RESULT = result
 
@@ -220,6 +230,21 @@ def _format_people_result(result):
 
     return "\n".join(lines)
 
+def _format_reasoning_result(result):
+    """Generate a grounded answer from QueryResult evidence."""
+    evidence = {
+        "intent": result.intent.name
+        if hasattr(result.intent, "name")
+        else str(result.intent),
+        "answer_type": result.answer_type,
+        "data": result.data,
+    }
+
+    return reason(
+        result.query,
+        evidence,
+    )
+
 
 def main():
 
@@ -250,6 +275,8 @@ def main():
             print(
                 f"\nLifeOS error: {exc}\n"
             )
+
+    
 
 
 if __name__ == "__main__":
