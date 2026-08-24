@@ -17,6 +17,12 @@ Rules:
 - If evidence is insufficient, say so explicitly.
 - Do not treat filenames or metadata as factual evidence unless relevant.
 - Prefer precise answers over speculation.
+- Treat temporal metadata as evidence.
+- Prefer context that is valid at the current query time.
+- Distinguish current context from historical context.
+- Do not treat expired context as current.
+- If temporal evidence conflicts, acknowledge the conflict.
+- Never infer a time relationship that is not supported by the evidence.
 
 USER QUERY:
 {query}
