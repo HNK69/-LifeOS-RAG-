@@ -3,6 +3,8 @@ from llm.generator import generate_response
 from .evidence import build_evidence
 
 
+
+
 def build_reasoning_prompt(query, evidence):
     return f"""
 You are the reasoning layer of LifeOS.
@@ -23,6 +25,14 @@ Rules:
 - Do not treat expired context as current.
 - If temporal evidence conflicts, acknowledge the conflict.
 - Never infer a time relationship that is not supported by the evidence.
+- Synthesize information across all evidence types when multiple types are present.
+- Cross-check personal context against documents and structured data.
+- Cross-check relationships against supporting document or multimodal evidence when available.
+- Prefer evidence that is directly relevant to the user's question.
+- Do not assume that the presence of multiple sources makes a claim true.
+- If evidence sources support the same conclusion, explain the conclusion clearly.
+- If evidence sources conflict, explicitly identify the conflict instead of choosing arbitrarily.
+- Use the confidence score as a signal of evidence quality, not as a fact.
 
 USER QUERY:
 {query}
