@@ -1,5 +1,36 @@
 from typing import Any
 
+
+def _detect_conflicts(evidence):
+    """Detect conflicting values for the same semantic evidence key."""
+    conflicts = []
+    values_by_key = {}
+
+    for item in evidence.get("temporal_context", []):
+        key = item.get("key")
+        if not key:
+            continue
+
+        values_by_key.setdefault(key, []).append(item)
+
+    for key, items in values_by_key.items():
+        values = {
+            str(item.get("value"))
+            for item in items
+            if item.get("value") is not None
+        }
+
+        if len(values) > 1:
+            conflicts.append({
+                "key": key,
+                "values": sorted(values),
+                "evidence": items,
+            })
+
+    return conflicts
+
+
+
 def _extract_temporal_context(data):
     """Extract temporal metadata from personal context."""
     temporal = []
@@ -42,6 +73,7 @@ def build_evidence(result) -> dict[str, Any]:
         "personal_context": {},
         "multimodal": [],
         "temporal_context": [],
+        "conflicts": [],
     }
 
     if not data:
@@ -75,6 +107,9 @@ def build_evidence(result) -> dict[str, Any]:
             {},
         )
         evidence["temporal_context"] = _extract_temporal_context(
+            evidence
+        )
+        evidence["conflicts"] = _detect_conflicts(
             evidence
         )
 

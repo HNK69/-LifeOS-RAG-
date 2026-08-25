@@ -88,3 +88,44 @@ def test_empty_result():
     assert evidence["relationships"] == []
     assert evidence["personal_context"] == {}
     assert evidence["multimodal"] == []
+
+def test_no_conflict_for_single_context_value():
+    result = SimpleNamespace(
+        query="What class do I have?",
+        intent=SimpleNamespace(name="schedule_query"),
+        answer_type="schedule_context",
+        data={
+            "time_context": {
+                "personal_context": {
+                    "current_class": {
+                        "value": "DBMS",
+                        "context_type": "schedule",
+                    }
+                }
+            },
+            "documents": [],
+        },
+    )
+
+    evidence = build_evidence(result)
+
+    assert evidence["conflicts"] == []
+
+
+def test_conflict_field_exists():
+    result = SimpleNamespace(
+        query="What class do I have?",
+        intent=SimpleNamespace(name="schedule_query"),
+        answer_type="schedule_context",
+        data={
+            "time_context": {
+                "personal_context": {}
+            },
+            "documents": [],
+        },
+    )
+
+    evidence = build_evidence(result)
+
+    assert "conflicts" in evidence
+    assert evidence["conflicts"] == []
