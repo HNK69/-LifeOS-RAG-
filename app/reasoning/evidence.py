@@ -55,6 +55,39 @@ def _extract_temporal_context(data):
 
     return temporal
 
+def _calculate_confidence(evidence):
+    """Calculate deterministic confidence for the assembled evidence."""
+    signals = []
+
+    if evidence.get("sources"):
+        signals.append(0.8)
+
+    if evidence.get("structured_data"):
+        signals.append(0.9)
+
+    if evidence.get("relationships"):
+        signals.append(0.9)
+
+    if evidence.get("multimodal"):
+        signals.append(0.8)
+
+    if evidence.get("personal_context"):
+        signals.append(0.9)
+
+    if evidence.get("temporal_context"):
+        signals.append(0.9)
+
+    if not signals:
+        return 0.0
+
+    confidence = sum(signals) / len(signals)
+
+    if evidence.get("conflicts"):
+        confidence *= 0.5
+
+    return round(max(0.0, min(confidence, 1.0)), 3)
+
+
 def build_evidence(result) -> dict[str, Any]:
     """Normalize a QueryResult into a reasoning-ready evidence package."""
     data = result.data
@@ -74,9 +107,12 @@ def build_evidence(result) -> dict[str, Any]:
         "multimodal": [],
         "temporal_context": [],
         "conflicts": [],
+        "confidence": 0.0,
     }
 
+
     if not data:
+        evidence["confidence"] = 0.0
         return evidence
 
     if result.answer_type == "documents":
@@ -126,6 +162,9 @@ def build_evidence(result) -> dict[str, Any]:
 
     elif result.answer_type == "multimodal":
         evidence["multimodal"] = data
+
+    
+    evidence["confidence"] = _calculate_confidence(evidence)
 
     return evidence 
 
