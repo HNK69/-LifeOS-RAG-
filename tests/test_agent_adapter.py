@@ -2,9 +2,22 @@ import pytest
 
 from app.agent.adapter import agent_state_to_query_result
 from app.agent.state import AgentState, ToolCall
-
+from query.router import QueryIntent, QueryResult
 
 def test_agent_state_converts_to_query_result():
+    expected = QueryResult(
+        query="college notes",
+        intent=QueryIntent(
+            "document_search",
+            1.0,
+            {"method": "semantic_chunks"},
+        ),
+        answer_type="documents",
+        data=[
+            {"document": "Operating Systems notes"}
+        ],
+    )
+
     state = AgentState(
         query="college notes",
         status="completed",
@@ -13,24 +26,18 @@ def test_agent_state_converts_to_query_result():
             ToolCall(
                 tool_name="document_search",
                 arguments={"query": "college notes"},
-                result=[
-                    {
-                        "document": "Operating Systems notes"
-                    }
-                ],
+                result=expected,
             )
         ],
     )
 
     result = agent_state_to_query_result(state)
 
-    assert result.query == "college notes"
-    assert result.intent == "document_search"
+    assert result == expected
+    assert result.intent.name == "document_search"
     assert result.answer_type == "documents"
     assert result.data == [
-        {
-            "document": "Operating Systems notes"
-        }
+        {"document": "Operating Systems notes"}
     ]
 
 
@@ -59,3 +66,54 @@ def test_agent_state_without_tool_calls_cannot_convert():
         match="no tool calls",
     ):
         agent_state_to_query_result(state)
+
+def test_file_discovery_result_preserves_answer_type():
+    expected = QueryResult(
+        query="python files",
+        intent=QueryIntent("file_discovery", 0.9, {}),
+        answer_type="files",
+        data=[],
+    )
+
+    state = AgentState(
+        query="python files",
+        status="completed",
+        tool_calls=[
+            ToolCall(
+                tool_name="file_discovery",
+                arguments={"query": "python files"},
+                result=expected,
+            )
+        ],
+    )
+
+    result = agent_state_to_query_result(state)
+
+    assert result == expected
+    assert result.answer_type == "files"
+
+
+def test_current_time_result_preserves_answer_type():
+    expected = QueryResult(
+        query="what time is it?",
+        intent=QueryIntent("current_time", 1.0, {}),
+        answer_type="time",
+        data={"time": "12:00:00"},
+    )
+
+    state = AgentState(
+        query="what time is it?",
+        status="completed",
+        tool_calls=[
+            ToolCall(
+                tool_name="current_time",
+                arguments={"query": "what time is it?"},
+                result=expected,
+            )
+        ],
+    )
+
+    result = agent_state_to_query_result(state)
+
+    assert result == expected
+    assert result.answer_type == "time"
