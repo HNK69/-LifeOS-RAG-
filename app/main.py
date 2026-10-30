@@ -30,7 +30,20 @@ if __package__ is None:
 from intelligence.router import route_intelligent
 from prompting.prompt_builder import build_prompt
 from llm.generator import generate_response
-
+from app.agent.decision import AgentPlanner
+from app.agent.executor import AgentExecutor
+from app.agent.runner import AgentRunner
+from app.agent.tools import create_default_registry
+from app.agent.adapter import agent_state_to_query_result
+from app.agent.decision import AgentPlanner
+from app.agent.executor import AgentExecutor
+from app.agent.runner import AgentRunner
+from app.agent.tools import create_default_registry
+from app.agent.adapter import agent_state_to_query_result
+from app.agent.decision import AgentPlanner
+from app.agent.executor import AgentExecutor
+from app.agent.runner import AgentRunner
+from app.agent.tools import create_default_registry
 
 LAST_RESULT = None
 
@@ -146,6 +159,67 @@ def _format_structured_files(result):
 
     return "\n".join(lines)
 
+def _create_agent_runner():
+    """Create the bounded agent using the allowlisted tool registry."""
+
+    registry = create_default_registry()
+
+    return AgentRunner(
+        planner=AgentPlanner(registry),
+        executor=AgentExecutor(registry),
+    )
+
+
+def _try_agent_query(query):
+    """
+    Attempt the bounded agent path.
+
+    Returns QueryResult when the agent supports the request.
+    Returns None when the request is not currently agent-supported.
+    """
+
+    runner = _create_agent_runner()
+
+    state = runner.run(query)
+
+    if state.status != "completed":
+        return None
+
+    try:
+        return agent_state_to_query_result(state)
+    except ValueError:
+        return None
+    
+def _create_agent_runner():
+    """Create the bounded agent using the allowlisted tool registry."""
+
+    registry = create_default_registry()
+
+    return AgentRunner(
+        planner=AgentPlanner(registry),
+        executor=AgentExecutor(registry),
+    )
+
+
+def _try_agent_query(query):
+    """
+    Attempt the bounded agent path.
+
+    Returns QueryResult when the agent supports the request.
+    Returns None when the request is not currently agent-supported.
+    """
+
+    runner = _create_agent_runner()
+    state = runner.run(query)
+
+    if state.status != "completed":
+        return None
+
+    try:
+        return agent_state_to_query_result(state)
+    except ValueError:
+        return None
+    
 
 def handle_query(query):
     """
@@ -154,7 +228,12 @@ def handle_query(query):
 
     global LAST_RESULT
 
-    result = route_intelligent(query)
+    agent_result = _try_agent_query(query)
+
+    if agent_result is not None:
+        result = agent_result
+    else:
+        result = route_intelligent(query)
 
     if result.answer_type != "unknown":
 
@@ -244,6 +323,36 @@ def _format_reasoning_result(result):
         result.query,
         result,
     )
+
+def _create_agent_runner():
+    """Create the bounded agent using the allowlisted tool registry."""
+
+    registry = create_default_registry()
+
+    planner = AgentPlanner(registry)
+    executor = AgentExecutor(registry)
+
+    return AgentRunner(
+        planner=planner,
+        executor=executor,
+    )
+
+def _try_agent_query(query):
+    """
+    Attempt agent execution for currently supported agent capabilities.
+
+    Returns AgentState on successful planning/execution.
+    Returns None when the current agent does not support the intent.
+    """
+
+    runner = _create_agent_runner()
+
+    try:
+        return runner.run(query)
+    except Exception:
+        return None
+
+    
 
 
 def main():
