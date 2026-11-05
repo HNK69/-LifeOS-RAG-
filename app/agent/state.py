@@ -34,3 +34,24 @@ class AgentState(BaseModel):
 
     step_count: int = 0
     max_steps: int = 5
+
+    def mark_running(self) -> None:
+        """Transition from pending to running."""
+        if self.status in {"completed", "failed"}:
+            raise ValueError(
+                f"Cannot transition terminal state {self.status} to running."
+            )
+        self.status = "running"
+
+    def mark_completed(self, final_answer: str | None = None) -> None:
+        """Transition to completed state."""
+        if self.status == "failed":
+            raise ValueError("Cannot transition failed state to completed.")
+        self.status = "completed"
+        if final_answer is not None:
+            self.final_answer = final_answer
+
+    def mark_failed(self, error: str) -> None:
+        """Transition to failed state."""
+        self.status = "failed"
+        self.error = error

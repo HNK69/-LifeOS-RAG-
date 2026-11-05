@@ -4,6 +4,7 @@ from app.agent.adapter import agent_state_to_query_result
 from app.agent.state import AgentState, ToolCall
 from query.router import QueryIntent, QueryResult
 
+
 def test_agent_state_converts_to_query_result():
     expected = QueryResult(
         query="college notes",
@@ -67,6 +68,7 @@ def test_agent_state_without_tool_calls_cannot_convert():
     ):
         agent_state_to_query_result(state)
 
+
 def test_file_discovery_result_preserves_answer_type():
     expected = QueryResult(
         query="python files",
@@ -117,3 +119,44 @@ def test_current_time_result_preserves_answer_type():
 
     assert result == expected
     assert result.answer_type == "time"
+
+
+def test_adapter_rejects_non_query_result_data():
+    state = AgentState(
+        query="query",
+        status="completed",
+        tool_calls=[
+            ToolCall(
+                tool_name="echo_tool",
+                arguments={"message": "hello"},
+                result={"echo": "hello"},
+            )
+        ],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Agent tool result is not a QueryResult",
+    ):
+        agent_state_to_query_result(state)
+
+
+def test_adapter_rejects_tool_call_error_in_completed_state():
+    state = AgentState(
+        query="query",
+        status="completed",
+        tool_calls=[
+            ToolCall(
+                tool_name="failing_tool",
+                arguments={},
+                result=None,
+                error="Fatal execution failure",
+            )
+        ],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Fatal execution failure",
+    ):
+        agent_state_to_query_result(state)

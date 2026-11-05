@@ -264,6 +264,42 @@ This forms the foundation for future identity-aware reasoning across documents, 
 
 ---
 
+## Agentic LifeOS (Phase 10)
+
+LifeOS incorporates a bounded agentic execution layer built on top of its existing deterministic capabilities.
+
+```text
+User Query
+    ↓
+AgentRunner (bounded loop, configurable max_steps)
+    ↓
+AgentPlanner (LLM / fake planner decides WHAT)
+    ↓
+AgentDecision (action: tool, finish, fail)
+    ↓
+AgentExecutor (validates tool & arguments schema)
+    ↓
+ToolRegistry (allowlisted registered tools)
+    ↓
+Deterministic Tool Execution
+    ↓
+ToolCall & Evidence recorded in AgentState
+    ↓
+Next step decision if needed (or termination)
+    ↓
+QueryResult Adapter / Grounded Final Answer
+```
+
+### Key Principles
+
+- **Bounded Execution**: Loop execution is strictly bounded by explicit `max_steps` to guarantee no infinite loops or uncontrolled recursion.
+- **Planner / Executor Separation**: The LLM proposes actions; Python validates schemas and executes registered tools. The model is never granted direct shell, filesystem, or Python execution privileges.
+- **Allowlisted Tool Registry**: Tools require typed Pydantic input schemas and registered deterministic execution contracts (`current_time`, `document_search`, `file_discovery`).
+- **State Machine & Auditability**: `AgentState` tracks explicit lifecycle transitions (`pending` → `running` → `completed` or `failed`), recording every tool call, arguments, structured result, error, and grounded evidence.
+- **Backward Compatibility**: Completed agent runs adapt seamlessly to `QueryResult` via `agent_state_to_query_result`, integrating cleanly with existing `main.py` response formatting.
+
+---
+
 ## Technology Stack
 
 | Layer | Technology |
@@ -289,6 +325,7 @@ Dependencies are pinned in `requirements.txt`.
 ```text
 LifeOS/
 ├── app/
+│   ├── agent/            # Bounded agent loop, planner, executor, registry, adapter
 │   ├── context/          # Personal context storage and resolution
 │   ├── embeddings/       # Embedding generation
 │   ├── ingestion/        # File and structured-data ingestion
@@ -347,12 +384,12 @@ New capabilities are accompanied by deterministic tests, while live-LLM behavior
 - [x] Phase 6B — People & Identity
 - [x] Phase 6C — Deeper Multimodal Intelligence
 - [x] Phase 7 — Personal Context
+- [x] Phase 10 — Agentic LifeOS
 
 ### Next
 
 - [ ] Phase 8 — Entity & Relationship Intelligence
 - [ ] Phase 9 — Advanced Reasoning & Personal Intelligence
-- [ ] Phase 10 — Agentic LifeOS
 - [ ] Phase 11 — Product / API / Security Layer
 - [ ] Phase 12 — Production LifeOS
 

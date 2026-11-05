@@ -1,16 +1,54 @@
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from intelligence.planner import plan_query
+from app.agent.state import AgentState
 from app.agent.tools import ToolRegistry
+
+ActionType = Literal["tool", "finish", "fail"]
 
 
 class AgentDecision(BaseModel):
-    """Validated decision describing the next tool invocation."""
+    """Validated decision describing an agent action."""
 
-    tool_name: str
+    action: ActionType = "tool"
+    tool_name: str | None = None
     arguments: dict[str, Any] = Field(default_factory=dict)
+    has_more_steps: bool = False
+    final_answer: str | None = None
+    error: str | None = None
+
+    @classmethod
+    def call_tool(
+        cls,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
+        has_more_steps: bool = False,
+    ) -> "AgentDecision":
+        """Convenience constructor for a tool execution step."""
+        return cls(
+            action="tool",
+            tool_name=tool_name,
+            arguments=arguments or {},
+            has_more_steps=has_more_steps,
+        )
+
+    @classmethod
+    def finish(cls, final_answer: str | None = None) -> "AgentDecision":
+        """Convenience constructor for successful termination."""
+        return cls(
+            action="finish",
+            final_answer=final_answer,
+        )
+
+    @classmethod
+    def fail(cls, error: str) -> "AgentDecision":
+        """Convenience constructor for safe failure."""
+        return cls(
+            action="fail",
+            error=error,
+        )
 
 
 class AgentPlanner:
@@ -25,11 +63,24 @@ class AgentPlanner:
     def __init__(self, registry: ToolRegistry):
         self.registry = registry
 
-    def decide(self, query: str) -> AgentDecision:
-        """Use the existing LifeOS planner to choose the next tool."""
+    def decide(
+        self,
+        query: str,
+        state: AgentState | None = None,
+    ) -> AgentDecision:
+        """Use the existing LifeOS planner to choose the next tool or action."""
 
         if not query or not query.strip():
             raise ValueError("Query must not be empty.")
+
+        # If previous steps already ran in this execution
+        if state is not None and state.tool_calls:
+            last_call = state.tool_calls[-1]
+            if last_call.error:
+                return AgentDecision.fail(
+                    f"Previous step failed: {last_call.error}"
+                )
+            return AgentDecision.finish()
 
         plan = plan_query(query.strip())
 
@@ -48,8 +99,12 @@ class AgentPlanner:
             }
         else:
             arguments = plan.arguments.model_dump(exclude_none=True)
+            if "query" not in arguments or not arguments["query"]:
+                arguments["query"] = query.strip()
 
         return AgentDecision(
+            action="tool",
             tool_name=tool_name,
             arguments=arguments,
+            has_more_steps=False,
         )

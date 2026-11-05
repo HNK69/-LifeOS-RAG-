@@ -146,3 +146,29 @@ def test_handle_query_end_to_end_with_agent_query_result():
 
     assert response == "Agent answer"
     format_document.assert_called_once_with(agent_result)
+
+
+def test_handle_query_falls_back_to_route_intelligent_when_agent_returns_none():
+    from app import main
+
+    # Reset any previous session state to avoid cross-test interference
+    main.LAST_RESULT = None
+
+    fallback_result = QueryResult(
+        query="some complex intent",
+        intent="unknown",
+        answer_type="unknown",
+        data=None,
+    )
+
+    with patch(
+        "app.main._try_agent_query",
+        return_value=None,
+    ), patch(
+        "app.main.route_intelligent",
+        return_value=fallback_result,
+    ) as mock_route:
+        response = main.handle_query("some complex intent")
+
+    mock_route.assert_called_once_with("some complex intent")
+    assert "don't have a tool for it yet" in response
