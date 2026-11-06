@@ -184,6 +184,21 @@ def _process_text_document(file_path, file_hash):
         str(file_path),
     )
 
+    try:
+        from knowledge.analyzer import analyze_document
+
+        analyze_document(
+            file_path,
+            text=cleaned_text,
+            extract_graph=True,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Document entity analysis failed for %s: %s",
+            file_path.name,
+            exc,
+        )
+
     mark_success(
         file_path,
         file_hash,

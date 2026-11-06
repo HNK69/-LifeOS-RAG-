@@ -45,6 +45,40 @@ _STRUCTURED_PATTERNS: list[tuple[re.Pattern, str, str | None]] = [
      "filter", None),
 ]
 
+_RELATIONSHIP_PATTERNS: list[re.Pattern] = [
+    re.compile(r"\b(?:who does|who is)\s+([A-Za-z0-9_\s]+?)\s+(?:know|work with|study with|connected to|related to)\b", re.I),
+    re.compile(r"\b(?:relationship|connection) between\s+([A-Za-z0-9_\s]+?)\s+and\s+([A-Za-z0-9_\s]+)\b", re.I),
+    re.compile(r"\bwho works with\s+([A-Za-z0-9_\s]+)\b", re.I),
+    re.compile(r"\bwho knows\s+([A-Za-z0-9_\s]+)\b", re.I),
+    re.compile(r"\bwho studies with\s+([A-Za-z0-9_\s]+)\b", re.I),
+    re.compile(r"\bwho is connected to\s+([A-Za-z0-9_\s]+)\b", re.I),
+    re.compile(r"\bwhat is the relationship of\s+([A-Za-z0-9_\s]+)\b", re.I),
+]
+
+
+def _rescue_relationship_intent(
+    query: str,
+    data: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Override 'unknown' intent when the query clearly requests entity relationship retrieval.
+    """
+    if data.get("intent") != "unknown":
+        return data
+
+    for pattern in _RELATIONSHIP_PATTERNS:
+        match = pattern.search(query)
+        if match:
+            data["intent"] = "relationship_search"
+            arguments = data.setdefault("arguments", {})
+            entity = match.group(1).strip()
+            if entity and not arguments.get("entity_name"):
+                arguments["entity_name"] = entity
+            arguments.setdefault("direction", "both")
+            break
+
+    return data
+
 
 def _rescue_structured_intent(
     query: str,
@@ -96,6 +130,9 @@ Available intents:
 - structured_query: calculate/filter/sort/count/aggregate a dataset
 - schedule_query: ask about timetable/classes/schedule
 - current_time: explicitly ask current time/date
+- relationship_search: ask about relationships, connections, associations, or affiliations between people or entities
+- people_search: find media or photos containing specific people
+- multimodal_search: semantically search across documents and media
 - unknown: unsupported request
 
 Semantic rules:
@@ -199,6 +236,7 @@ def plan_query(query: str) -> IntentPlan:
     # query clearly contains structured-data signals, override.
     # ------------------------------------------------------------------
     data = _rescue_structured_intent(query, data)
+    data = _rescue_relationship_intent(query, data)
 
     if data.get("intent") == "structured_query":
         arguments = data.setdefault("arguments", {})

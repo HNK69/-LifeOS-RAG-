@@ -97,7 +97,11 @@ def build_evidence(result) -> dict[str, Any]:
         "intent": (
             result.intent.name
             if hasattr(result.intent, "name")
-            else str(result.intent)
+            else (
+                result.intent.intent
+                if hasattr(result.intent, "intent")
+                else str(result.intent)
+            )
         ),
         "answer_type": result.answer_type,
         "sources": [],
@@ -138,10 +142,20 @@ def build_evidence(result) -> dict[str, Any]:
         ]
 
         time_context = data.get("time_context", {})
-        evidence["personal_context"] = time_context.get(
+        raw_personal_ctx = time_context.get(
             "personal_context",
             {},
         )
+
+        evidence["personal_context"] = raw_personal_ctx
+
+        if isinstance(raw_personal_ctx, dict):
+            rel_items = raw_personal_ctx.get("relationships", [])
+            if rel_items:
+                for r in rel_items:
+                    if r not in evidence["relationships"]:
+                        evidence["relationships"].append(r)
+
         evidence["temporal_context"] = _extract_temporal_context(
             evidence
         )
@@ -158,12 +172,19 @@ def build_evidence(result) -> dict[str, Any]:
         ]
 
     elif result.answer_type == "relationships":
-        evidence["relationships"] = data
+        if isinstance(data, list):
+            evidence["relationships"] = data
+        elif isinstance(data, dict):
+            evidence["relationships"] = data.get("relationships", [data])
 
     elif result.answer_type == "multimodal":
         evidence["multimodal"] = data
 
-    
+    if isinstance(data, dict) and "relationships" in data:
+        for r in data["relationships"]:
+            if r not in evidence["relationships"]:
+                evidence["relationships"].append(r)
+
     evidence["confidence"] = _calculate_confidence(evidence)
 
     return evidence 

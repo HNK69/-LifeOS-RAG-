@@ -238,6 +238,14 @@ def label_person(person_id, label, is_user=False):
 
         connection.commit()
 
+    if cursor.rowcount > 0:
+        try:
+            from knowledge.entity_relationship import link_person_to_entity
+
+            link_person_to_entity(person_id, canonical_name=str(label).strip())
+        except Exception:
+            pass
+
     return cursor.rowcount > 0
 
 def create_user_identity(label):

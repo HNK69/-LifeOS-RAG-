@@ -11,6 +11,8 @@ from app.agent.tools import (
     DocumentSearchTool,
     FileDiscoveryInput,
     FileDiscoveryTool,
+    RelationshipSearchInput,
+    RelationshipSearchTool,
     ToolRegistry,
     ToolResult,
     create_default_registry,
@@ -147,14 +149,16 @@ def test_create_default_registry_contains_exactly_intended_tools():
         "current_time",
         "document_search",
         "file_discovery",
+        "relationship_search",
     ]
 
     assert registry.list_tools() == expected_tools
-    assert len(registry.list_tools()) == 3
+    assert len(registry.list_tools()) == 4
 
     assert isinstance(registry.get("current_time"), CurrentTimeTool)
     assert isinstance(registry.get("document_search"), DocumentSearchTool)
     assert isinstance(registry.get("file_discovery"), FileDiscoveryTool)
+    assert isinstance(registry.get("relationship_search"), RelationshipSearchTool)
 
 
 def test_default_registry_tools_have_valid_input_schemas():

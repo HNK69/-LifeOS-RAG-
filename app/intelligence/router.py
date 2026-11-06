@@ -70,10 +70,12 @@ def execute_plan(query: str, plan: IntentPlan) -> QueryResult:
     if intent == "relationship_search":
         data = args.model_dump(exclude_none=True)
 
-        return _relationship_search(
+        res = _relationship_search(
             query,
             data,
         )
+        res.intent = plan
+        return res
     
     if intent == "structured_query":
         data = args.model_dump(exclude_none=True)

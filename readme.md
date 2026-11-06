@@ -63,6 +63,15 @@ The system is intentionally built incrementally so each layer has a clear respon
 - Deterministic context conflict resolution
 - Context freshness filtering
 - Personal context passed into the existing LLM decision boundary
+- Persistent entity and relationship knowledge graph (SQLite)
+- Case-insensitive entity lookup and alias resolution
+- Automated entity and relationship extraction on document ingestion
+- Reindex lifecycle support for entities and relationships
+- People identity linking to knowledge graph entities
+- Relationship-aware personal context composition
+- Grounded relationship evidence integration for reasoning
+- Deterministic relationship query planning and tool execution
+- Agentic relationship search through bounded AgentRunner
 
 ---
 
@@ -384,11 +393,11 @@ New capabilities are accompanied by deterministic tests, while live-LLM behavior
 - [x] Phase 6B — People & Identity
 - [x] Phase 6C — Deeper Multimodal Intelligence
 - [x] Phase 7 — Personal Context
+- [x] Phase 8 — Entity & Relationship Intelligence
 - [x] Phase 10 — Agentic LifeOS
 
 ### Next
 
-- [ ] Phase 8 — Entity & Relationship Intelligence
 - [ ] Phase 9 — Advanced Reasoning & Personal Intelligence
 - [ ] Phase 11 — Product / API / Security Layer
 - [ ] Phase 12 — Production LifeOS

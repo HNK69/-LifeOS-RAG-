@@ -4,6 +4,7 @@ sys.path.insert(0, "app")
 
 from ingestion.ingest import ingest_documents
 from vectordb.chroma_db import collection
+from knowledge.entity_relationship import clear_entity_store
 
 
 print("Deleting old vector data...")
@@ -14,6 +15,9 @@ ids = existing.get("ids", [])
 
 if ids:
     collection.delete(ids=ids)
+
+print("Resetting entity and relationship store...")
+clear_entity_store()
 
 print("Resetting registry status...")
 

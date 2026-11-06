@@ -144,6 +144,16 @@ def _normalize_relationship_type(relationship_type):
 
 
 def _build_relationship_prompt(text, entities):
+    formatted_entities = [
+        {
+            "name": e.get("name") or e.get("canonical_name"),
+            "type": e.get("type") or e.get("entity_type"),
+            "attributes": e.get("attributes", {}),
+        }
+        if isinstance(e, dict)
+        else e
+        for e in entities
+    ]
     return f"""
 Extract meaningful relationships between the entities explicitly supported
 by the following text.
@@ -152,7 +162,7 @@ Text:
 {text}
 
 Known entities:
-{json.dumps(entities, ensure_ascii=False)}
+{json.dumps(formatted_entities, ensure_ascii=False)}
 
 For every relationship return:
 - source: exact entity name from the known entities
@@ -217,10 +227,11 @@ def extract_relationships(text, entities=None):
         return []
 
     known_names = {
-        entity["name"]
+        (entity.get("name") or entity.get("canonical_name"))
         for entity in entities
-        if isinstance(entity, dict) and entity.get("name")
+        if isinstance(entity, dict) and (entity.get("name") or entity.get("canonical_name"))
     }
+    known_names_lower = {name.strip().lower() for name in known_names if name}
 
     normalized = []
 
@@ -237,7 +248,10 @@ def extract_relationships(text, entities=None):
         if not source or not target or not relationship_type:
             continue
 
-        if source not in known_names or target not in known_names:
+        if (
+            source.strip().lower() not in known_names_lower
+            or target.strip().lower() not in known_names_lower
+        ):
             continue
 
         if source == target:
@@ -308,8 +322,8 @@ def extract_and_store_relationships(
             (
                 entity
                 for entity in source_matches
-                if entity["canonical_name"]
-                == relationship["source"]
+                if entity["canonical_name"].strip().lower()
+                == relationship["source"].strip().lower()
             ),
             None,
         )
@@ -318,8 +332,8 @@ def extract_and_store_relationships(
             (
                 entity
                 for entity in target_matches
-                if entity["canonical_name"]
-                == relationship["target"]
+                if entity["canonical_name"].strip().lower()
+                == relationship["target"].strip().lower()
             ),
             None,
         )

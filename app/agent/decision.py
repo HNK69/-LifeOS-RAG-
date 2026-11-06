@@ -58,6 +58,7 @@ class AgentPlanner:
         "current_time": "current_time",
         "document_search": "document_search",
         "file_discovery": "file_discovery",
+        "relationship_search": "relationship_search",
     }
 
     def __init__(self, registry: ToolRegistry):
@@ -97,6 +98,12 @@ class AgentPlanner:
             arguments = {
                 "query": query.strip(),
             }
+        elif tool_name == "relationship_search":
+            arguments = plan.arguments.model_dump(exclude_none=True)
+            if not arguments.get("entity_name"):
+                arguments["entity_name"] = query.strip()
+            if "query" not in arguments:
+                arguments["query"] = query.strip()
         else:
             arguments = plan.arguments.model_dump(exclude_none=True)
             if "query" not in arguments or not arguments["query"]:

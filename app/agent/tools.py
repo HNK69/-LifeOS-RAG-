@@ -1,10 +1,11 @@
 from abc import ABC, abstractmethod
-from typing import Any
-from pydantic import BaseModel, Field
+from typing import Any, Literal
+from pydantic import BaseModel, Field, model_validator
 from query.router import (
     _current_time,
     _document_search,
     _file_discovery,
+    _relationship_search,
 )
 
 
@@ -131,8 +132,74 @@ def create_default_registry() -> ToolRegistry:
             CurrentTimeTool(),
             DocumentSearchTool(),
             FileDiscoveryTool(),
+            RelationshipSearchTool(),
         ]
     )
+
+
+class RelationshipSearchInput(BaseModel):
+    """Validated input for relationship retrieval."""
+
+    query: str | None = None
+    entity_name: str | None = None
+    entity_type: str | None = None
+    relationship_type: str | None = None
+    direction: Literal["outgoing", "incoming", "both"] = "both"
+
+    @model_validator(mode="after")
+    def validate_entity_identifier(self):
+        if not self.entity_name and self.query:
+            self.entity_name = self.query
+        if not self.entity_name or not self.entity_name.strip():
+            raise ValueError("Entity name or query must not be empty.")
+        return self
+
+
+class RelationshipSearchTool(AgentTool):
+    """Agent tool for deterministic entity relationship retrieval."""
+
+    name = "relationship_search"
+    description = "Find relationships and connections for a named entity."
+    input_schema = RelationshipSearchInput
+
+    def execute(self, input_data: RelationshipSearchInput) -> ToolResult:
+        try:
+            validated = self.input_schema.model_validate(input_data)
+            entity_name = (
+                validated.entity_name.strip()
+                if validated.entity_name
+                else ""
+            )
+
+            if not entity_name:
+                return ToolResult(
+                    success=False,
+                    error="Entity name must not be empty.",
+                )
+
+            args = {
+                "entity_name": entity_name,
+                "entity_type": validated.entity_type,
+                "relationship_type": validated.relationship_type,
+                "direction": validated.direction,
+            }
+            args = {k: v for k, v in args.items() if v is not None}
+
+            result = _relationship_search(
+                query=validated.query or f"relationship search for {entity_name}",
+                arguments=args,
+            )
+
+            return ToolResult(
+                success=True,
+                data=result,
+            )
+        except Exception as exc:
+            return ToolResult(
+                success=False,
+                error=str(exc),
+            )
+
 
 class FileDiscoveryInput(BaseModel):
     """Validated input for file discovery."""
