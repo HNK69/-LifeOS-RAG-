@@ -8,11 +8,19 @@ from app.config import DATA_DIR
 
 CONTEXT_DB = Path(DATA_DIR) / "context.db"
 
+try:
+    from storage.sqlite import connect_sqlite
+except ImportError:
+    from app.storage.sqlite import connect_sqlite
+
 
 def _connect():
-    connection = sqlite3.connect(CONTEXT_DB)
-    connection.row_factory = sqlite3.Row
-    return connection
+    return connect_sqlite(
+        CONTEXT_DB,
+        enable_foreign_keys=False,
+        timeout=10.0,
+        wal_mode=True,
+    )
 
 
 def initialize_context_store():

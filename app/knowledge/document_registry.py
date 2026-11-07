@@ -15,15 +15,19 @@ import json
 import sqlite3
 
 from config import REGISTRY_DB
+try:
+    from storage.sqlite import connect_sqlite
+except ImportError:
+    from app.storage.sqlite import connect_sqlite
 
 
 def _get_connection():
-    REGISTRY_DB.parent.mkdir(parents=True, exist_ok=True)
-
-    connection = sqlite3.connect(REGISTRY_DB)
-    connection.row_factory = sqlite3.Row
-
-    return connection
+    return connect_sqlite(
+        REGISTRY_DB,
+        enable_foreign_keys=False,
+        timeout=10.0,
+        wal_mode=True,
+    )
 
 
 def initialize_registry():

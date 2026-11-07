@@ -11,11 +11,19 @@ from config import DATA_DIR
 
 PEOPLE_DB = Path(DATA_DIR) / "people_registry.db"
 
+try:
+    from storage.sqlite import connect_sqlite
+except ImportError:
+    from app.storage.sqlite import connect_sqlite
+
 
 def _connect():
-    connection = sqlite3.connect(PEOPLE_DB)
-    connection.row_factory = sqlite3.Row
-    return connection
+    return connect_sqlite(
+        PEOPLE_DB,
+        enable_foreign_keys=True,
+        timeout=10.0,
+        wal_mode=True,
+    )
 
 
 def initialize_people_registry():

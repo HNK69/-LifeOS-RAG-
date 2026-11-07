@@ -8,12 +8,19 @@ from config import DATA_DIR
 
 ENTITY_DB = Path(DATA_DIR) / "entities.db"
 
+try:
+    from storage.sqlite import connect_sqlite
+except ImportError:
+    from app.storage.sqlite import connect_sqlite
+
 
 def _connect():
-    connection = sqlite3.connect(ENTITY_DB)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    return connection
+    return connect_sqlite(
+        ENTITY_DB,
+        enable_foreign_keys=True,
+        timeout=10.0,
+        wal_mode=True,
+    )
 
 
 def initialize_entity_store():

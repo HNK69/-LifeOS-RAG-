@@ -16,7 +16,9 @@ Response adapter
 User-facing answer
 """
 import sys
+from contextvars import ContextVar
 from pathlib import Path
+from typing import Any
 
 from reasoning.engine import reason
 
@@ -36,7 +38,43 @@ from app.agent.runner import AgentRunner
 from app.agent.tools import create_default_registry
 from app.agent.adapter import agent_state_to_query_result
 
-LAST_RESULT = None
+_last_result_var: ContextVar[Any] = ContextVar("last_result", default=None)
+
+
+class _MainModule(sys.modules[__name__].__class__):
+    @property
+    def LAST_RESULT(self) -> Any:
+        return _last_result_var.get()
+
+    @LAST_RESULT.setter
+    def LAST_RESULT(self, value: Any) -> None:
+        _last_result_var.set(value)
+
+
+sys.modules[__name__].__class__ = _MainModule
+
+
+def get_session_last_result(session: dict[str, Any] | None = None) -> Any:
+    """Retrieve last_result from explicit session or context-local storage."""
+    if session is not None:
+        return session.get("last_result")
+    return _last_result_var.get()
+
+
+def set_session_last_result(result: Any, session: dict[str, Any] | None = None) -> None:
+    """Store last_result in explicit session or context-local storage."""
+    if session is not None:
+        session["last_result"] = result
+    else:
+        _last_result_var.set(result)
+
+
+def clear_session(session: dict[str, Any] | None = None) -> None:
+    """Clear last_result from explicit session or context-local storage."""
+    if session is not None:
+        session.pop("last_result", None)
+    else:
+        _last_result_var.set(None)
 
 
 def _format_file_results(result):
@@ -178,12 +216,15 @@ def _try_agent_query(query):
         return None
 
 
-def handle_query(query):
+def handle_query(query: str, session: dict[str, Any] | None = None) -> str:
     """
     Main LifeOS query handler.
+    Supports request/session isolation via optional session dict or context-local storage.
     """
-
-    global LAST_RESULT
+    if session is not None:
+        last_result = session.get("last_result")
+    else:
+        last_result = _last_result_var.get()
 
     agent_result = _try_agent_query(query)
 
@@ -193,8 +234,10 @@ def handle_query(query):
         result = route_intelligent(query)
 
     if result.answer_type != "unknown":
-
-        LAST_RESULT = result
+        if session is not None:
+            session["last_result"] = result
+        else:
+            _last_result_var.set(result)
 
     if result.answer_type in {
         "relationships",
@@ -205,7 +248,10 @@ def handle_query(query):
         return _format_reasoning_result(result)
 
     if result.answer_type == "files":
-        LAST_RESULT = result
+        if session is not None:
+            session["last_result"] = result
+        else:
+            _last_result_var.set(result)
 
         return _format_file_results(result)
 
@@ -222,16 +268,21 @@ def handle_query(query):
         return _format_people_result(result)
 
     # Follow-up query handling
-    if result.answer_type == "unknown" and LAST_RESULT:
+    if result.answer_type == "unknown" and last_result:
 
-        if LAST_RESULT.answer_type == "files":
+        if last_result.answer_type == "files":
+            if not last_result.data:
+                return "I couldn't find a matching file from your previous request."
 
-            last_item = LAST_RESULT.data[0]
+            last_item = last_result.data[0]
 
             if isinstance(last_item, dict):
                 file_query = last_item.get("filename") or last_item.get("source")
             else:
                 file_query = None
+
+            if not file_query:
+                return "I couldn't determine which file to search from your previous request."
 
             from query.router import _document_search
 
@@ -239,7 +290,7 @@ def handle_query(query):
                 _document_search(file_query)
             )
 
-        return _format_document_result(LAST_RESULT)
+        return _format_document_result(last_result)
 
     return (
         "I understood the request, but "
@@ -262,14 +313,6 @@ def _format_people_result(result):
 
 def _format_reasoning_result(result):
     """Generate a grounded answer from QueryResult evidence."""
-    evidence = {
-        "intent": result.intent.name
-        if hasattr(result.intent, "name")
-        else str(result.intent),
-        "answer_type": result.answer_type,
-        "data": result.data,
-    }
-
     return reason(
         result.query,
         result,
