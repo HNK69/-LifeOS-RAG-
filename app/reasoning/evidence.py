@@ -1,109 +1,77 @@
+"""
+evidence.py
+
+Evidence normalization, structuring, and validation pipeline for LifeOS.
+"""
+from __future__ import annotations
+
 from typing import Any
 
-
-def _detect_conflicts(evidence):
-    """Detect conflicting values for the same semantic evidence key."""
-    conflicts = []
-    values_by_key = {}
-
-    for item in evidence.get("temporal_context", []):
-        key = item.get("key")
-        if not key:
-            continue
-
-        values_by_key.setdefault(key, []).append(item)
-
-    for key, items in values_by_key.items():
-        values = {
-            str(item.get("value"))
-            for item in items
-            if item.get("value") is not None
-        }
-
-        if len(values) > 1:
-            conflicts.append({
-                "key": key,
-                "values": sorted(values),
-                "evidence": items,
-            })
-
-    return conflicts
+from .confidence import calculate_calibrated_confidence
+from .conflicts import detect_all_conflicts
 
 
-
-def _extract_temporal_context(data):
-    """Extract temporal metadata from personal context."""
-    temporal = []
+def _extract_temporal_context(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Extract temporal metadata from personal context.
+    Correctly unpacks nested 'context' dictionaries produced by compose_context().
+    """
+    temporal: list[dict[str, Any]] = []
 
     personal_context = data.get("personal_context", {})
-    
+    if not isinstance(personal_context, dict):
+        return temporal
 
-    for key, item in personal_context.items():
+    # If nested under 'context' (standard compose_context return format), unpack it
+    if isinstance(personal_context.get("context"), dict):
+        items_map = personal_context["context"]
+    else:
+        items_map = personal_context
+
+    for key, item in items_map.items():
         if not isinstance(item, dict):
             continue
 
-        temporal.append(
-            {
-                "key": key,
-                "value": item.get("value"),
-                "context_type": item.get("context_type"),
-                "updated_at": item.get("updated_at"),
-                "valid_from": item.get("valid_from"),
-                "valid_until": item.get("valid_until"),
-            }
-        )
+        temporal.append({
+            "key": key,
+            "value": item.get("value"),
+            "context_type": item.get("context_type"),
+            "updated_at": item.get("updated_at"),
+            "valid_from": item.get("valid_from"),
+            "valid_until": item.get("valid_until"),
+        })
 
     return temporal
 
-def _calculate_confidence(evidence):
-    """Calculate deterministic confidence for the assembled evidence."""
-    signals = []
 
-    if evidence.get("sources"):
-        signals.append(0.8)
-
-    if evidence.get("structured_data"):
-        signals.append(0.9)
-
-    if evidence.get("relationships"):
-        signals.append(0.9)
-
-    if evidence.get("multimodal"):
-        signals.append(0.8)
-
-    if evidence.get("personal_context"):
-        signals.append(0.9)
-
-    if evidence.get("temporal_context"):
-        signals.append(0.9)
-
-    if not signals:
-        return 0.0
-
-    confidence = sum(signals) / len(signals)
-
-    if evidence.get("conflicts"):
-        confidence *= 0.5
-
-    return round(max(0.0, min(confidence, 1.0)), 3)
+def _detect_conflicts(evidence: dict[str, Any]) -> list[dict[str, Any]]:
+    """Backward-compatible deterministic conflict detection."""
+    return detect_all_conflicts(evidence)
 
 
-def build_evidence(result) -> dict[str, Any]:
-    """Normalize a QueryResult into a reasoning-ready evidence package."""
+def _calculate_confidence(evidence: dict[str, Any]) -> float:
+    """Backward-compatible deterministic calibrated confidence calculation."""
+    return calculate_calibrated_confidence(evidence)
+
+
+def build_evidence(result: Any) -> dict[str, Any]:
+    """
+    Normalize any QueryResult or composite retrieval into a unified reasoning evidence package.
+    """
     data = result.data
 
-    evidence = {
-        "query": result.query,
+    evidence: dict[str, Any] = {
+        "query": getattr(result, "query", ""),
         "intent": (
             result.intent.name
             if hasattr(result.intent, "name")
             else (
                 result.intent.intent
                 if hasattr(result.intent, "intent")
-                else str(result.intent)
+                else str(getattr(result, "intent", "unknown"))
             )
         ),
-        "answer_type": result.answer_type,
+        "answer_type": getattr(result, "answer_type", "unknown"),
         "sources": [],
         "structured_data": [],
         "relationships": [],
@@ -114,39 +82,41 @@ def build_evidence(result) -> dict[str, Any]:
         "confidence": 0.0,
     }
 
-
     if not data:
         evidence["confidence"] = 0.0
         return evidence
 
-    if result.answer_type == "documents":
+    # 1. Document chunks
+    if evidence["answer_type"] == "documents":
         evidence["sources"] = [
             {
                 "source": item.get("source"),
                 "file_path": item.get("file_path"),
                 "content": item.get("document"),
+                "distance": item.get("distance"),
+                "rerank_score": item.get("rerank_score"),
+                "chunk_id": item.get("chunk_id"),
             }
             for item in data
-            if item.get("document")
+            if isinstance(item, dict) and item.get("document")
         ]
 
-    elif result.answer_type == "schedule_context":
+    # 2. Schedule & Time Context
+    elif evidence["answer_type"] == "schedule_context":
         evidence["sources"] = [
             {
                 "source": item.get("source"),
                 "file_path": item.get("file_path"),
                 "content": item.get("document"),
+                "distance": item.get("distance"),
+                "rerank_score": item.get("rerank_score"),
             }
             for item in data.get("documents", [])
-            if item.get("document")
+            if isinstance(item, dict) and item.get("document")
         ]
 
         time_context = data.get("time_context", {})
-        raw_personal_ctx = time_context.get(
-            "personal_context",
-            {},
-        )
-
+        raw_personal_ctx = time_context.get("personal_context", {})
         evidence["personal_context"] = raw_personal_ctx
 
         if isinstance(raw_personal_ctx, dict):
@@ -156,14 +126,8 @@ def build_evidence(result) -> dict[str, Any]:
                     if r not in evidence["relationships"]:
                         evidence["relationships"].append(r)
 
-        evidence["temporal_context"] = _extract_temporal_context(
-            evidence
-        )
-        evidence["conflicts"] = _detect_conflicts(
-            evidence
-        )
-
-    elif result.answer_type == "structured_result":
+    # 3. Structured Data
+    elif evidence["answer_type"] == "structured_result":
         evidence["structured_data"] = [
             {
                 "dataset": data.get("dataset"),
@@ -171,21 +135,60 @@ def build_evidence(result) -> dict[str, Any]:
             }
         ]
 
-    elif result.answer_type == "relationships":
+    # 4. Entity Relationships
+    elif evidence["answer_type"] == "relationships":
         if isinstance(data, list):
             evidence["relationships"] = data
         elif isinstance(data, dict):
             evidence["relationships"] = data.get("relationships", [data])
 
-    elif result.answer_type == "multimodal":
-        evidence["multimodal"] = data
+    # 5. Multimodal Evidence
+    elif evidence["answer_type"] == "multimodal":
+        evidence["multimodal"] = data if isinstance(data, list) else [data]
 
+    # 6. Multi-Source / Composite Aggregation
+    elif evidence["answer_type"] in {"multi_source", "composite"}:
+        if isinstance(data, dict):
+            if data.get("documents"):
+                evidence["sources"].extend([
+                    {
+                        "source": item.get("source"),
+                        "file_path": item.get("file_path"),
+                        "content": item.get("document"),
+                        "distance": item.get("distance"),
+                        "rerank_score": item.get("rerank_score"),
+                    }
+                    for item in data["documents"]
+                    if isinstance(item, dict) and item.get("document")
+                ])
+            if data.get("personal_context"):
+                evidence["personal_context"] = data["personal_context"]
+            if data.get("relationships"):
+                for r in data["relationships"]:
+                    if r not in evidence["relationships"]:
+                        evidence["relationships"].append(r)
+            if data.get("structured_data"):
+                evidence["structured_data"] = data["structured_data"]
+            if data.get("multimodal"):
+                evidence["multimodal"] = data["multimodal"]
+
+    # Extract auxiliary relationships embedded in dict data
     if isinstance(data, dict) and "relationships" in data:
         for r in data["relationships"]:
             if r not in evidence["relationships"]:
                 evidence["relationships"].append(r)
 
+    # Extract temporal context from personal context if present
+    if evidence.get("personal_context"):
+        temporal = _extract_temporal_context(evidence)
+        for t in temporal:
+            if t not in evidence["temporal_context"]:
+                evidence["temporal_context"].append(t)
+
+    # Deterministic conflict detection
+    evidence["conflicts"] = _detect_conflicts(evidence)
+
+    # Calibrated confidence scoring
     evidence["confidence"] = _calculate_confidence(evidence)
 
-    return evidence 
-
+    return evidence

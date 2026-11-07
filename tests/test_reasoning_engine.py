@@ -44,6 +44,11 @@ def test_reason_returns_grounded_response(monkeypatch):
     )
 
     assert result == "Alice knows Bob."
+    assert result.confidence > 0.0
+    assert len(result.evidence_used) >= 1
+    assert len(result.facts) >= 1
+    assert result.conflicts_detected == []
+    assert isinstance(result.to_dict(), dict)
 
 
 def test_reason_empty_evidence():

@@ -114,23 +114,19 @@ def _format_schedule_result(result):
 
 
 def _format_document_result(result):
-    """Answer questions from retrieved documents."""
+    """Answer questions from retrieved documents using the reasoning engine."""
 
+    data = result.data or []
     retrieved_chunks = [
         item["document"]
-        for item in result.data
-        if item.get("document")
+        for item in data
+        if isinstance(item, dict) and item.get("document")
     ]
 
     if not retrieved_chunks:
         return "I couldn't find relevant information in your documents."
 
-    prompt = build_prompt(
-        result.query,
-        retrieved_chunks,
-    )
-
-    return generate_response(prompt)
+    return _format_reasoning_result(result)
 
 
 def _format_structured_files(result):
@@ -215,12 +211,6 @@ def handle_query(query):
 
     if result.answer_type == "time":
         return _format_time_result(result)
-
-    if result.answer_type == "structured_result":
-        return _format_structured_result(result)
-
-    if result.answer_type == "schedule_context":
-        return _format_schedule_result(result)
 
     if result.answer_type == "documents":
         return _format_document_result(result)

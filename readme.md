@@ -72,6 +72,13 @@ The system is intentionally built incrementally so each layer has a clear respon
 - Grounded relationship evidence integration for reasoning
 - Deterministic relationship query planning and tool execution
 - Agentic relationship search through bounded AgentRunner
+- Unified grounded reasoning boundary across all factual query types
+- Deterministic multi-source evidence aggregation across documents, context, relationships, and structured data
+- Calibrated confidence scoring incorporating retrieval distance, context freshness, and evidence quality
+- Deterministic conflict and contradiction detection for schedules, properties, and relationships
+- Deterministic relative-time resolution and temporal expression extraction
+- Bounded multi-hop relationship graph traversal with cycle prevention
+- Structured reasoning results with explicit separation of grounded facts and inferences
 
 ---
 
@@ -394,11 +401,11 @@ New capabilities are accompanied by deterministic tests, while live-LLM behavior
 - [x] Phase 6C — Deeper Multimodal Intelligence
 - [x] Phase 7 — Personal Context
 - [x] Phase 8 — Entity & Relationship Intelligence
+- [x] Phase 9 — Advanced Reasoning & Personal Intelligence
 - [x] Phase 10 — Agentic LifeOS
 
 ### Next
 
-- [ ] Phase 9 — Advanced Reasoning & Personal Intelligence
 - [ ] Phase 11 — Product / API / Security Layer
 - [ ] Phase 12 — Production LifeOS
 

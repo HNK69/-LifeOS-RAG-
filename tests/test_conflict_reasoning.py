@@ -30,3 +30,7 @@ def test_detects_conflicting_temporal_context():
     evidence = build_evidence(result)
 
     assert "conflicts" in evidence
+    assert len(evidence["conflicts"]) == 1
+    assert evidence["conflicts"][0]["conflicting_values"] == ["DBMS", "OS"]
+    assert evidence["conflicts"][0]["conflict_type"] == "schedule_overlap"
+    assert evidence["confidence"] < 0.8  # Penalized by conflict
