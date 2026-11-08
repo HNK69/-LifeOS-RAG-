@@ -5,6 +5,7 @@ sys.path.insert(0, "app")
 
 from pathlib import Path
 
+import config
 from app.ingestion import ingest
 
 
@@ -12,6 +13,16 @@ def test_image_ingestion_stores_people_metadata(
     tmp_path,
     monkeypatch,
 ):
+    monkeypatch.setattr(
+        config,
+        "DOCUMENTS_DIR",
+        tmp_path,
+    )
+    monkeypatch.setattr(
+        ingest,
+        "DOCUMENTS_DIR",
+        tmp_path,
+    )
     image_path = tmp_path / "photo.jpg"
     image_path.write_bytes(b"fake-image")
 

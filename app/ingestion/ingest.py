@@ -18,6 +18,15 @@ from pathlib import Path
 import logging
 
 from config import DOCUMENTS_DIR, SUPPORTED_EXTENSIONS
+try:
+    from config import get_max_file_size_bytes
+except ImportError:
+    from app.config import get_max_file_size_bytes
+
+try:
+    from ingestion.guardrails import validate_document_path, check_file_size
+except ImportError:
+    from app.ingestion.guardrails import validate_document_path, check_file_size
 
 from ingestion.reader import read_documents
 from ingestion.file_classifier import classify_file
@@ -78,7 +87,14 @@ def _discover_files(documents_dir):
         if file_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
             continue
 
-        resolved_path = file_path.resolve()
+        try:
+            resolved_path = validate_document_path(
+                file_path,
+                base_dir=documents_dir,
+                must_exist=True,
+            )
+        except (ValueError, FileNotFoundError):
+            continue
 
         current_files[str(resolved_path)] = resolved_path
 
@@ -221,9 +237,11 @@ def ingest_file(file_path):
     It does not scan the entire documents directory.
     """
 
-    path = Path(
-        file_path
-    ).resolve()
+    path = validate_document_path(
+        file_path,
+        base_dir=getattr(ingest, "DOCUMENTS_DIR", DOCUMENTS_DIR) if "ingest" in globals() else DOCUMENTS_DIR,
+        must_exist=False,
+    )
 
     if not path.exists() or not path.is_file():
         logger.info(
@@ -236,6 +254,18 @@ def ingest_file(file_path):
         logger.debug(
             "Unsupported file type, skipping: %s",
             path,
+        )
+        return False
+
+    # Check file size limit before ANY expensive processing (hashing, reading, chunking)
+    max_bytes = get_max_file_size_bytes(path)
+    file_size = path.stat().st_size
+    if file_size > max_bytes:
+        logger.warning(
+            "Rejecting oversized file %s: %d bytes exceeds limit %d bytes",
+            path.name,
+            file_size,
+            max_bytes,
         )
         return False
 
@@ -430,9 +460,11 @@ def remove_file(file_path):
     Used by the filesystem watcher when a file disappears.
     """
 
-    path = Path(
-        file_path
-    ).resolve()
+    path = validate_document_path(
+        file_path,
+        base_dir=DOCUMENTS_DIR,
+        must_exist=False,
+    )
 
     logger.info(
         "Removing document: %s",

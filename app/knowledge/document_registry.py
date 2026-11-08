@@ -96,7 +96,7 @@ def get_file_signature(file_path):
     }
 
 
-def calculate_file_hash(file_path):
+def calculate_file_hash(file_path, max_bytes=None):
     """
     Calculate SHA-256 using streaming reads.
 
@@ -104,14 +104,36 @@ def calculate_file_hash(file_path):
     metadata indicates that it may have changed.
     """
 
-    sha256 = hashlib.sha256()
+    path = Path(file_path)
+    if max_bytes is None:
+        try:
+            from config import get_max_file_size_bytes
+        except ImportError:
+            from app.config import get_max_file_size_bytes
+        max_bytes = get_max_file_size_bytes(path)
 
-    with open(file_path, "rb") as file:
+    try:
+        from ingestion.guardrails import check_file_size
+    except ImportError:
+        from app.ingestion.guardrails import check_file_size
+
+    check_file_size(path, max_bytes=max_bytes)
+
+    sha256 = hashlib.sha256()
+    total_read = 0
+
+    with open(path, "rb") as file:
         while True:
             chunk = file.read(1024 * 1024)
 
             if not chunk:
                 break
+
+            total_read += len(chunk)
+            if total_read > max_bytes:
+                raise ValueError(
+                    f"File exceeds maximum allowed size ({max_bytes} bytes) during hash calculation"
+                )
 
             sha256.update(chunk)
 

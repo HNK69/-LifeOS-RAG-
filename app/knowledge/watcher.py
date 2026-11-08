@@ -20,7 +20,17 @@ from pathlib import Path
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-from config import DOCUMENTS_DIR
+from config import (
+    DOCUMENTS_DIR,
+    WATCHER_STABILITY_SECONDS,
+    WATCHER_CHECK_INTERVAL_SECONDS,
+    WATCHER_MAX_STABILITY_WAIT_SECONDS,
+)
+
+try:
+    from ingestion.guardrails import validate_document_path
+except ImportError:
+    from app.ingestion.guardrails import validate_document_path
 
 from ingestion.ingest import (
     ingest_documents,
@@ -36,8 +46,9 @@ logger = logging.getLogger(__name__)
 # FILE STABILITY
 # ------------------------------------------------------------
 
-STABILITY_SECONDS = 1.0
-CHECK_INTERVAL_SECONDS = 0.25
+STABILITY_SECONDS = WATCHER_STABILITY_SECONDS
+CHECK_INTERVAL_SECONDS = WATCHER_CHECK_INTERVAL_SECONDS
+MAX_STABILITY_WAIT_SECONDS = WATCHER_MAX_STABILITY_WAIT_SECONDS
 
 
 # ------------------------------------------------------------
@@ -81,67 +92,64 @@ class DocumentEventHandler(FileSystemEventHandler):
     # --------------------------------------------------------
 
     @staticmethod
-    def _wait_for_file_stability(file_path):
-
-        path = Path(
-            file_path
-        )
-
+    def _wait_for_file_stability(
+        file_path,
+        stability_duration=STABILITY_SECONDS,
+        check_interval=CHECK_INTERVAL_SECONDS,
+        max_wait_seconds=MAX_STABILITY_WAIT_SECONDS,
+        sleep_func=time.sleep,
+        time_func=time.monotonic,
+    ):
+        path = Path(file_path)
+        start_time = time_func()
         stable_since = None
         previous_size = None
 
         while True:
+            # Enforce bounded maximum wait time to prevent worker deadlocks
+            elapsed = time_func() - start_time
+            if elapsed >= max_wait_seconds:
+                logger.warning(
+                    "File stability timeout reached for %s (elapsed %.2fs >= %.2fs, previous_size=%s)",
+                    path.name,
+                    elapsed,
+                    max_wait_seconds,
+                    previous_size,
+                )
+                return False
 
             if not path.exists() or not path.is_file():
                 return False
 
             try:
-
                 current_size = path.stat().st_size
-
             except OSError:
-
-                time.sleep(
-                    CHECK_INTERVAL_SECONDS
-                )
-
+                sleep_func(check_interval)
                 continue
 
+            # 0-byte file: incomplete writes may start empty.
+            # Wait boundedly up to max_wait_seconds for data to arrive.
             if current_size == 0:
-
-                stable_since = None
                 previous_size = 0
-
-                time.sleep(
-                    CHECK_INTERVAL_SECONDS
-                )
-
+                stable_since = None
+                sleep_func(check_interval)
                 continue
 
+            # Size changed
             if current_size != previous_size:
-
                 previous_size = current_size
-                stable_since = time.monotonic()
-
-                time.sleep(
-                    CHECK_INTERVAL_SECONDS
-                )
-
+                stable_since = time_func()
+                sleep_func(check_interval)
                 continue
 
+            # Size is unchanged and > 0 bytes
             if (
                 stable_since is not None
-                and (
-                    time.monotonic()
-                    - stable_since
-                ) >= STABILITY_SECONDS
+                and (time_func() - stable_since) >= stability_duration
             ):
-
                 return True
 
-            time.sleep(
-                CHECK_INTERVAL_SECONDS
-            )
+            sleep_func(check_interval)
 
     # --------------------------------------------------------
     # EVENT COLLECTION
@@ -232,6 +240,20 @@ class DocumentEventHandler(FileSystemEventHandler):
             )
 
             try:
+                # Security boundary check: ensure event path resolves strictly beneath documents_dir
+                try:
+                    path = validate_document_path(
+                        path,
+                        base_dir=self.documents_dir,
+                        must_exist=False,
+                    )
+                except ValueError as err:
+                    logger.warning(
+                        "Rejecting watcher event for invalid path %s: %s",
+                        path_string,
+                        err,
+                    )
+                    continue
 
                 # ------------------------------------------------
                 # DELETED
@@ -256,6 +278,10 @@ class DocumentEventHandler(FileSystemEventHandler):
 
                     continue
 
+                # Filter temporary office lock files or hidden files
+                if path.name.startswith("~$") or path.name.startswith("."):
+                    continue
+
                 stable = (
                     self._wait_for_file_stability(
                         path
@@ -265,8 +291,8 @@ class DocumentEventHandler(FileSystemEventHandler):
                 if not stable:
 
                     logger.warning(
-                        "File disappeared before becoming stable: %s",
-                        path,
+                        "File %s did not stabilize or remained empty; skipping.",
+                        path.name,
                     )
 
                     continue

@@ -89,9 +89,35 @@ TEXT_EXTENSIONS = {
 
 # Files larger than this should be handled carefully rather
 # than blindly loaded into memory.
-MAX_TEXT_FILE_SIZE_MB = 50
-
+MAX_TEXT_FILE_SIZE_MB = int(os.getenv("LIFEOS_MAX_TEXT_FILE_SIZE_MB", "50"))
 MAX_TEXT_FILE_SIZE_BYTES = MAX_TEXT_FILE_SIZE_MB * 1024 * 1024
+
+MAX_STRUCTURED_FILE_SIZE_MB = int(os.getenv("LIFEOS_MAX_STRUCTURED_FILE_SIZE_MB", "50"))
+MAX_STRUCTURED_FILE_SIZE_BYTES = MAX_STRUCTURED_FILE_SIZE_MB * 1024 * 1024
+
+MAX_IMAGE_FILE_SIZE_MB = int(os.getenv("LIFEOS_MAX_IMAGE_FILE_SIZE_MB", "20"))
+MAX_IMAGE_FILE_SIZE_BYTES = MAX_IMAGE_FILE_SIZE_MB * 1024 * 1024
+
+MAX_MEDIA_FILE_SIZE_MB = int(os.getenv("LIFEOS_MAX_MEDIA_FILE_SIZE_MB", "100"))
+MAX_MEDIA_FILE_SIZE_BYTES = MAX_MEDIA_FILE_SIZE_MB * 1024 * 1024
+
+MAX_FILE_SIZE_MB = int(os.getenv("LIFEOS_MAX_FILE_SIZE_MB", "50"))
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+
+
+def get_max_file_size_bytes(file_path) -> int:
+    """Return the configured maximum allowed file size in bytes for a given file path."""
+    suffix = Path(file_path).suffix.lower()
+    if suffix in TEXT_EXTENSIONS or suffix in {".pptx", ".ppt"}:
+        return MAX_TEXT_FILE_SIZE_BYTES
+    if suffix in STRUCTURED_EXTENSIONS:
+        return MAX_STRUCTURED_FILE_SIZE_BYTES
+    if suffix in IMAGE_EXTENSIONS:
+        return MAX_IMAGE_FILE_SIZE_BYTES
+    if suffix in AUDIO_EXTENSIONS or suffix in VIDEO_EXTENSIONS:
+        return MAX_MEDIA_FILE_SIZE_BYTES
+    return MAX_FILE_SIZE_BYTES
+
 
 # Embedding batch size.
 EMBEDDING_BATCH_SIZE = 16
@@ -135,6 +161,19 @@ WATCHER_DEBOUNCE_SECONDS = 2.0
 # Prevent the watcher from repeatedly processing the same path
 # during rapid filesystem changes.
 WATCHER_EVENT_COOLDOWN_SECONDS = 5.0
+
+# Watcher file stability settings
+WATCHER_STABILITY_SECONDS = float(
+    os.getenv("LIFEOS_WATCHER_STABILITY_SECONDS", "1.0")
+)
+
+WATCHER_CHECK_INTERVAL_SECONDS = float(
+    os.getenv("LIFEOS_WATCHER_CHECK_INTERVAL_SECONDS", "0.25")
+)
+
+WATCHER_MAX_STABILITY_WAIT_SECONDS = float(
+    os.getenv("LIFEOS_WATCHER_MAX_STABILITY_WAIT_SECONDS", "5.0")
+)
 
 
 # ============================================================

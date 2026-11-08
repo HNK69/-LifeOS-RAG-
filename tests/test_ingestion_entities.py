@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import config
 from ingestion import ingest
 from knowledge.entity_relationship import (
     clear_entity_store,
@@ -11,6 +12,8 @@ from knowledge.entity_relationship import (
 
 
 def test_ingest_file_populates_entities_and_relationships(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DOCUMENTS_DIR", tmp_path)
+    monkeypatch.setattr(ingest, "DOCUMENTS_DIR", tmp_path)
     clear_entity_store()
 
     test_file = tmp_path / "notes.txt"

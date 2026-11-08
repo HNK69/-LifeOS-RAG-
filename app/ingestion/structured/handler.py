@@ -21,6 +21,11 @@ from pathlib import Path
 import csv
 import json
 
+try:
+    from ingestion.guardrails import check_file_size
+except ImportError:
+    from app.ingestion.guardrails import check_file_size
+
 
 def _inspect_csv(path):
     """
@@ -29,6 +34,7 @@ def _inspect_csv(path):
     Time:  O(n), where n is the number of CSV rows.
     Space: O(c), where c is the number of columns.
     """
+    check_file_size(path)
 
     with path.open(
         "r",
@@ -71,6 +77,7 @@ def _inspect_json(path):
     Time:  O(n), where n is the JSON file size.
     Space: O(n) in the worst case because the JSON structure is parsed.
     """
+    check_file_size(path)
 
     with path.open(
         "r",

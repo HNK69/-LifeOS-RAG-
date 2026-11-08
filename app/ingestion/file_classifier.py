@@ -12,6 +12,16 @@ large files without hard-coding behavior around one particular dataset.
 
 from pathlib import Path
 
+try:
+    from ingestion.guardrails import validate_document_path
+except ImportError:
+    from app.ingestion.guardrails import validate_document_path
+
+try:
+    from config import MAX_TEXT_FILE_SIZE_MB
+except ImportError:
+    from app.config import MAX_TEXT_FILE_SIZE_MB
+
 
 # Files that are naturally suited to normal text extraction,
 # chunking, and embedding.
@@ -32,7 +42,7 @@ STRUCTURED_EXTENSIONS = {
 }
 
 
-def classify_file(file_path, large_file_threshold_mb=10):
+def classify_file(file_path, large_file_threshold_mb=None):
     """
     Classify a file based on its extension and size.
 
@@ -43,12 +53,10 @@ def classify_file(file_path, large_file_threshold_mb=10):
     assumptions about a specific dataset or filename.
     """
 
-    path = Path(file_path)
+    if large_file_threshold_mb is None:
+        large_file_threshold_mb = MAX_TEXT_FILE_SIZE_MB
 
-    if not path.is_file():
-        raise FileNotFoundError(
-            f"File does not exist: {path}"
-        )
+    path = validate_document_path(file_path, must_exist=True)
 
     extension = path.suffix.lower()
 

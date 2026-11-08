@@ -7,6 +7,16 @@ import base64
 import mimetypes
 from pathlib import Path
 
+try:
+    from ingestion.guardrails import validate_document_path, check_file_size
+except ImportError:
+    from app.ingestion.guardrails import validate_document_path, check_file_size
+
+try:
+    from config import get_max_file_size_bytes
+except ImportError:
+    from app.config import get_max_file_size_bytes
+
 
 VISION_MODEL = "google/gemma-4-31b-it"
 
@@ -88,12 +98,10 @@ def analyze_image(file_path, prompt=None):
     Analyze a local image using an OpenRouter free vision model.
     """
 
-    path = Path(file_path)
+    path = validate_document_path(file_path, must_exist=True)
 
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Image not found: {path}"
-        )
+    max_bytes = get_max_file_size_bytes(path)
+    check_file_size(path, max_bytes=max_bytes)
 
     mime_type, _ = mimetypes.guess_type(
         path.name
@@ -109,8 +117,15 @@ def analyze_image(file_path, prompt=None):
             f"Unsupported image type: {mime_type}"
         )
 
+    with open(path, "rb") as f:
+        raw_bytes = f.read(max_bytes + 1)
+        if len(raw_bytes) > max_bytes:
+            raise ValueError(
+                f"Image exceeds maximum allowed size ({max_bytes} bytes)"
+            )
+
     image_data = base64.b64encode(
-        path.read_bytes()
+        raw_bytes
     ).decode("utf-8")
 
     if prompt is None:
