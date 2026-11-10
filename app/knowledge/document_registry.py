@@ -437,6 +437,27 @@ def remove_document(file_path):
         connection.commit()
 
 
+def mark_removal_failed(file_path, error_message):
+    """
+    Record a failed removal attempt without deleting the registry entry.
+
+    Preserves the registry record so future reconciliation scans (_remove_deleted_files)
+    or subsequent remove_file retries continue to discover and clean the file.
+    """
+    path_str = str(Path(file_path).resolve())
+    with _get_connection() as connection:
+        connection.execute(
+            """
+            UPDATE documents
+            SET ingestion_status = 'failed',
+                error_message = ?
+            WHERE path = ?
+            """,
+            (f"Removal failed: {error_message}", path_str),
+        )
+        connection.commit()
+
+
 def get_documents_by_status(status):
     """Return all documents with the requested ingestion status."""
 

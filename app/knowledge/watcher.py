@@ -215,6 +215,21 @@ class DocumentEventHandler(FileSystemEventHandler):
 
     def _flush_events(self):
 
+        try:
+            from knowledge.coordination import is_reindexing_active
+            if is_reindexing_active():
+                logger.info("Reindex in progress; deferring watcher event flush.")
+                with self._lock:
+                    self._timer = threading.Timer(
+                        DEBOUNCE_SECONDS,
+                        self._flush_events,
+                    )
+                    self._timer.daemon = True
+                    self._timer.start()
+                return
+        except Exception:
+            pass
+
         with self._lock:
 
             events = dict(

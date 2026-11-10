@@ -102,11 +102,17 @@ def store_embeddings(chunks, embeddings, file_path):
             }
         )
 
+    embeddings_list = (
+        embeddings.tolist()
+        if hasattr(embeddings, "tolist")
+        else list(embeddings)
+    )
+
     # First write the new version.
     collection.upsert(
         ids=ids,
         documents=chunks,
-        embeddings=embeddings.tolist(),
+        embeddings=embeddings_list,
         metadatas=metadatas,
     )
 
@@ -209,10 +215,16 @@ def store_media_description(
                 visual_metadata or {}),
         }
 
+        embedding_list = (
+            embedding.tolist()
+            if hasattr(embedding, "tolist")
+            else list(embedding)
+        )
+
         collection.upsert(
             ids=[chunk_id],
             documents=[description],
-            embeddings=[embedding.tolist()],
+            embeddings=[embedding_list],
             metadatas=[metadata],
         )
 

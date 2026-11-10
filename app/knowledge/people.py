@@ -476,3 +476,84 @@ def get_people_metadata(file_path):
             for person in people
         ]
     }
+
+
+def delete_face_embeddings_for_source(source_path):
+    """
+    Remove all face embeddings associated with a source image path.
+    If an anonymous unconfirmed person identity is left with zero embeddings,
+    prune the orphaned person record while strictly preserving confirmed/user identities.
+    """
+    if not source_path:
+        return 0
+
+    path_str = str(source_path)
+    try:
+        resolved_path_str = str(Path(source_path).resolve())
+    except Exception:
+        resolved_path_str = path_str
+
+    initialize_people_registry()
+
+    with _connect() as connection:
+        # Find all person_ids associated with this source path
+        rows = connection.execute(
+            """
+            SELECT DISTINCT person_id
+            FROM face_embeddings
+            WHERE source_path = ? OR source_path = ?
+            """,
+            (path_str, resolved_path_str),
+        ).fetchall()
+
+        affected_person_ids = [row["person_id"] for row in rows]
+
+        # Delete matching face embeddings
+        cursor = connection.execute(
+            """
+            DELETE FROM face_embeddings
+            WHERE source_path = ? OR source_path = ?
+            """,
+            (path_str, resolved_path_str),
+        )
+        deleted_count = cursor.rowcount
+
+        # For affected persons, check if they have remaining embeddings or are confirmed
+        for person_id in affected_person_ids:
+            remaining_row = connection.execute(
+                """
+                SELECT COUNT(*) as count
+                FROM face_embeddings
+                WHERE person_id = ?
+                """,
+                (person_id,),
+            ).fetchone()
+            remaining = remaining_row["count"] if remaining_row else 0
+
+            if remaining == 0:
+                person = connection.execute(
+                    """
+                    SELECT is_user, label, status
+                    FROM people
+                    WHERE person_id = ?
+                    """,
+                    (person_id,),
+                ).fetchone()
+
+                if person:
+                    # Only delete anonymous unconfirmed people with no label
+                    if (
+                        not person["is_user"]
+                        and not person["label"]
+                        and person["status"] == "unknown"
+                    ):
+                        connection.execute(
+                            """
+                            DELETE FROM people
+                            WHERE person_id = ?
+                            """,
+                            (person_id,),
+                        )
+
+        connection.commit()
+        return deleted_count

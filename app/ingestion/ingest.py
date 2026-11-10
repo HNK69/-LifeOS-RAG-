@@ -230,7 +230,7 @@ def _process_text_document(file_path, file_hash):
     )
 
 
-def ingest_file(file_path):
+def ingest_file(file_path, force=False):
     """
     Incrementally ingest ONE file.
 
@@ -244,6 +244,17 @@ def ingest_file(file_path):
         base_dir=getattr(ingest, "DOCUMENTS_DIR", DOCUMENTS_DIR) if "ingest" in globals() else DOCUMENTS_DIR,
         must_exist=False,
     )
+
+    try:
+        from knowledge.coordination import is_reindexing_active
+        if is_reindexing_active():
+            logger.warning(
+                "Rejecting ingest_file for %s: reindex is currently in progress",
+                path.name,
+            )
+            return False
+    except Exception:
+        pass
 
     if not path.exists() or not path.is_file():
         logger.info(
@@ -279,7 +290,7 @@ def ingest_file(file_path):
         # CHEAP CHANGE CHECK
         # -----------------------------------------------------
 
-        if not file_needs_processing(path):
+        if not force and not file_needs_processing(path):
 
             logger.debug(
                 "Unchanged, skipping: %s",
@@ -297,10 +308,17 @@ def ingest_file(file_path):
             media_metadata = get_media_metadata(file_path)
             file_hash = calculate_file_hash(file_path)
 
-            if is_unchanged(file_path, file_hash):
+            if not force and is_unchanged(file_path, file_hash):
                 return False
 
             if media_metadata["media_type"] == "image":
+                # Clean any previous face embeddings for this image before re-detecting
+                try:
+                    from knowledge.people import delete_face_embeddings_for_source
+                    delete_face_embeddings_for_source(file_path)
+                except Exception:
+                    pass
+
                 media_metadata["description"] = analyze_image(file_path)
                 media_metadata["visual_metadata"] = analyze_image_metadata(file_path)
 
@@ -315,6 +333,7 @@ def ingest_file(file_path):
                     media_metadata["description"],
                     description_embedding[0],
                     people=people_metadata["people"],
+                    visual_metadata=media_metadata["visual_metadata"],
                 )
 
             register_media(
@@ -368,7 +387,7 @@ def ingest_file(file_path):
         # CONTENT DID NOT ACTUALLY CHANGE
         # -----------------------------------------------------
 
-        if is_unchanged(
+        if not force and is_unchanged(
             path,
             file_hash,
         ):
@@ -457,53 +476,90 @@ def ingest_file(file_path):
 
 def remove_file(file_path):
     """
-    Remove ONE file from ChromaDB and the document registry.
+    Remove ONE file from ChromaDB, face embeddings, and the document registry.
 
     Used by the filesystem watcher when a file disappears.
     """
 
     path = validate_document_path(
         file_path,
-        base_dir=DOCUMENTS_DIR,
+        base_dir=getattr(ingest, "DOCUMENTS_DIR", DOCUMENTS_DIR) if "ingest" in globals() else DOCUMENTS_DIR,
         must_exist=False,
     )
+
+    try:
+        from knowledge.coordination import is_reindexing_active
+        if is_reindexing_active():
+            logger.warning(
+                "Rejecting remove_file for %s: reindex is currently in progress",
+                path.name,
+            )
+            return False
+    except Exception:
+        pass
 
     logger.info(
         "Removing document: %s",
         path.name,
     )
 
+    errors = []
+
+    # 1. Remove ChromaDB chunks (handles text chunks and media descriptions)
     try:
+        delete_document(path)
+    except Exception as exc:
+        logger.exception("Failed to delete ChromaDB chunks for %s: %s", path.name, exc)
+        errors.append(exc)
 
-        delete_document(
-            path
-        )
+    # 2. Remove derived face embeddings and prune orphaned anonymous identities
+    try:
+        from knowledge.people import delete_face_embeddings_for_source
+        delete_face_embeddings_for_source(path)
+    except Exception as exc:
+        logger.exception("Failed to delete face embeddings for %s: %s", path.name, exc)
+        errors.append(exc)
 
-        remove_document(
-            path
-        )
-
-        logger.info(
-            "Document removed successfully: %s",
+    # If derived stores failed to clean up, preserve the document registry record
+    # so reconciliation (e.g. _remove_deleted_files or retry) still has the breadcrumb.
+    if errors:
+        err_msg = "; ".join(str(e) for e in errors)
+        logger.error(
+            "Partial cleanup failure for %s (%d errors); preserving registry record for retry: %s",
             path.name,
+            len(errors),
+            err_msg,
         )
-
-        return True
-
-    except Exception as error:
-
-        logger.exception(
-            "Failed to remove document %s: %s",
-            path.name,
-            error,
-        )
-
+        try:
+            from knowledge.document_registry import mark_removal_failed
+            mark_removal_failed(path, err_msg)
+        except Exception:
+            pass
         return False
+
+    # 3. Derived stores cleaned successfully -> now remove registry record
+    try:
+        remove_document(path)
+    except Exception as exc:
+        logger.exception("Failed to remove document registry record for %s: %s", path.name, exc)
+        try:
+            from knowledge.document_registry import mark_removal_failed
+            mark_removal_failed(path, str(exc))
+        except Exception:
+            pass
+        return False
+
+    logger.info(
+        "Document removed successfully: %s",
+        path.name,
+    )
+    return True
 
 
 def ingest_documents(
     documents_dir=DOCUMENTS_DIR,
     include_csv=False,
+    force=False,
 ):
     """
     Full/incremental directory synchronization.
@@ -562,7 +618,8 @@ def ingest_documents(
     for file_path in current_files.values():
 
         ingest_file(
-            file_path
+            file_path,
+            force=force,
         )
 
     logger.info(
