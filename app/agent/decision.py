@@ -61,6 +61,13 @@ class AgentPlanner:
         "relationship_search": "relationship_search",
     }
 
+    @classmethod
+    def supports_intent(cls, intent: str | None) -> bool:
+        """Check if an intent can be handled by the bounded agent."""
+        if not intent:
+            return False
+        return intent in cls.INTENT_TO_TOOL
+
     def __init__(self, registry: ToolRegistry):
         self.registry = registry
 
@@ -68,6 +75,7 @@ class AgentPlanner:
         self,
         query: str,
         state: AgentState | None = None,
+        plan: IntentPlan | None = None,
     ) -> AgentDecision:
         """Use the existing LifeOS planner to choose the next tool or action."""
 
@@ -83,7 +91,8 @@ class AgentPlanner:
                 )
             return AgentDecision.finish()
 
-        plan = plan_query(query.strip())
+        if plan is None:
+            plan = plan_query(query.strip())
 
         tool_name = self.INTENT_TO_TOOL.get(plan.intent)
 

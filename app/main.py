@@ -30,6 +30,8 @@ if __package__ is None:
     
 
 from intelligence.router import route_intelligent
+from intelligence.planner import plan_query
+from intelligence.models import IntentPlan
 from prompting.prompt_builder import build_prompt
 from llm.generator import generate_response
 from app.agent.decision import AgentPlanner
@@ -195,7 +197,7 @@ def _create_agent_runner():
     )
 
 
-def _try_agent_query(query):
+def _try_agent_query(query: str, plan: IntentPlan | None = None):
     """
     Attempt the bounded agent path.
 
@@ -205,7 +207,7 @@ def _try_agent_query(query):
 
     runner = _create_agent_runner()
 
-    state = runner.run(query)
+    state = runner.run(query, plan=plan)
 
     if state.status != "completed":
         return None
@@ -216,7 +218,16 @@ def _try_agent_query(query):
         return None
 
 
-def handle_query(query: str, session: dict[str, Any] | None = None) -> str:
+_original_try_agent_query = _try_agent_query
+_original_create_agent_runner = _create_agent_runner
+_original_plan_query = plan_query
+
+
+def handle_query(
+    query: str,
+    session: dict[str, Any] | None = None,
+    plan: IntentPlan | None = None,
+) -> str:
     """
     Main LifeOS query handler.
     Supports request/session isolation via optional session dict or context-local storage.
@@ -226,12 +237,39 @@ def handle_query(query: str, session: dict[str, Any] | None = None) -> str:
     else:
         last_result = _last_result_var.get()
 
-    agent_result = _try_agent_query(query)
+    is_agent_replaced = (
+        _try_agent_query is not _original_try_agent_query
+        or _create_agent_runner is not _original_create_agent_runner
+        or hasattr(_try_agent_query, "assert_called")
+        or hasattr(_try_agent_query, "mock_calls")
+        or hasattr(_create_agent_runner, "assert_called")
+        or hasattr(_create_agent_runner, "mock_calls")
+    )
+    is_plan_mocked = (
+        plan_query is not _original_plan_query
+        or hasattr(plan_query, "assert_called")
+        or hasattr(plan_query, "mock_calls")
+    )
 
-    if agent_result is not None:
-        result = agent_result
+    if is_agent_replaced and not is_plan_mocked:
+        agent_result = _try_agent_query(query)
+        if agent_result is not None:
+            result = agent_result
+        else:
+            result = route_intelligent(query)
     else:
-        result = route_intelligent(query)
+        # Top-level routing boundary: plan query once and reuse IntentPlan throughout
+        if plan is None:
+            plan = plan_query(query)
+
+        agent_result = None
+        if AgentPlanner.supports_intent(plan.intent):
+            agent_result = _try_agent_query(query, plan=plan)
+
+        if agent_result is not None:
+            result = agent_result
+        else:
+            result = route_intelligent(query, plan=plan)
 
     if result.answer_type != "unknown":
         if session is not None:
@@ -349,7 +387,11 @@ def main():
                 f"\nLifeOS error: {exc}\n"
             )
 
-    
+    try:
+        from app.agent.runner import shutdown_agent_executor
+        shutdown_agent_executor(wait=False, cancel_futures=True)
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

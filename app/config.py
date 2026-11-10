@@ -192,9 +192,29 @@ OPENROUTER_BASE_URL = os.getenv(
     "https://openrouter.ai/api/v1",
 )
 
-LLM_TIMEOUT_SECONDS = 60
+LLM_TIMEOUT_SECONDS = float(
+    os.getenv("LIFEOS_LLM_TIMEOUT_SECONDS", "60.0")
+)
 
-LLM_MAX_RETRIES = 2
+LLM_MAX_RETRIES = int(
+    os.getenv("LIFEOS_LLM_MAX_RETRIES", "2")
+)
+
+
+# ============================================================
+# AGENT
+# ============================================================
+
+AGENT_TIMEOUT_SECONDS = float(
+    os.getenv("LIFEOS_AGENT_TIMEOUT_SECONDS", "30.0")
+)
+
+# Maximum bounded worker threads for asynchronous/timeout agent execution.
+# Capping this pool prevents unbounded thread accumulation when synchronous
+# operations block or stall.
+AGENT_MAX_WORKERS = int(
+    os.getenv("LIFEOS_AGENT_MAX_WORKERS", "4")
+)
 
 
 # ============================================================

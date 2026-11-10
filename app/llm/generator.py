@@ -13,9 +13,19 @@ except ImportError:
     from app.ingestion.guardrails import validate_document_path, check_file_size
 
 try:
-    from config import get_max_file_size_bytes
+    from config import (
+        get_max_file_size_bytes,
+        LLM_TIMEOUT_SECONDS,
+        LLM_MAX_RETRIES,
+        OPENROUTER_BASE_URL,
+    )
 except ImportError:
-    from app.config import get_max_file_size_bytes
+    from app.config import (
+        get_max_file_size_bytes,
+        LLM_TIMEOUT_SECONDS,
+        LLM_MAX_RETRIES,
+        OPENROUTER_BASE_URL,
+    )
 
 
 VISION_MODEL = "google/gemma-4-31b-it"
@@ -26,7 +36,9 @@ load_dotenv()
 
 client = OpenAI(
     api_key=os.getenv("OPENROUTER_API_KEY"),
-    base_url="https://openrouter.ai/api/v1",
+    base_url=os.getenv("OPENROUTER_BASE_URL", OPENROUTER_BASE_URL),
+    timeout=float(LLM_TIMEOUT_SECONDS),
+    max_retries=int(LLM_MAX_RETRIES),
 )
 
 

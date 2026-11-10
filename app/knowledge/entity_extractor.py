@@ -6,6 +6,45 @@ from llm.generator import generate_response
 from knowledge.entity_relationship import create_entity
 
 
+def _clean_json_text(text):
+    """Strip markdown code fences and surrounding whitespace deterministically."""
+    if not text or not isinstance(text, str):
+        return ""
+    cleaned = text.strip()
+    match = re.search(
+        r"^```(?:json)?\s*\n?(.*?)\n?\s*```$",
+        cleaned,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if match:
+        cleaned = match.group(1).strip()
+    elif cleaned.startswith("```"):
+        lines = cleaned.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        cleaned = "\n".join(lines).strip()
+    return cleaned
+
+
+def _parse_json_payload(response):
+    """Parse JSON payload safely into a dictionary, handling fences, malformed JSON, and structural mismatches."""
+    cleaned = _clean_json_text(response)
+    if not cleaned:
+        return {}
+
+    try:
+        data = json.loads(cleaned)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return {}
+
+    if not isinstance(data, dict):
+        return {}
+
+    return data
+
+
 def _normalize_name(name):
     """Normalize an extracted entity name deterministically."""
     name = str(name).strip()
@@ -75,11 +114,7 @@ def extract_entities(text):
     if not response:
         return []
 
-    try:
-        payload = json.loads(response)
-    except json.JSONDecodeError:
-        return []
-
+    payload = _parse_json_payload(response)
     entities = payload.get("entities", [])
 
     if not isinstance(entities, list):
@@ -216,11 +251,7 @@ def extract_relationships(text, entities=None):
     if not response:
         return []
 
-    try:
-        payload = json.loads(response)
-    except json.JSONDecodeError:
-        return []
-
+    payload = _parse_json_payload(response)
     relationships = payload.get("relationships", [])
 
     if not isinstance(relationships, list):

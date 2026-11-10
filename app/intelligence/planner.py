@@ -2,9 +2,74 @@ import json
 import re
 from typing import Any
 
+from pydantic import ValidationError
+
 from llm.generator import generate_response
 
 from .models import IntentPlan
+
+
+def _clean_json_text(text: Any) -> str:
+    """Strip markdown code fences and surrounding whitespace deterministically."""
+    if not text or not isinstance(text, str):
+        return ""
+    cleaned = text.strip()
+    match = re.search(
+        r"^```(?:json)?\s*\n?(.*?)\n?\s*```$",
+        cleaned,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if match:
+        cleaned = match.group(1).strip()
+    elif cleaned.startswith("```"):
+        lines = cleaned.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        cleaned = "\n".join(lines).strip()
+    return cleaned
+
+
+def _fallback_intent_data() -> dict[str, Any]:
+    return {
+        "intent": "unknown",
+        "confidence": 0.0,
+        "arguments": {},
+    }
+
+
+def _parse_llm_json(raw: Any) -> dict[str, Any]:
+    """Parse raw LLM string into intent dictionary safely without crashing."""
+    cleaned = _clean_json_text(raw)
+    if not cleaned:
+        return _fallback_intent_data()
+
+    try:
+        data = json.loads(cleaned)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return _fallback_intent_data()
+
+    if not isinstance(data, dict):
+        return _fallback_intent_data()
+
+    if "intent" not in data or not isinstance(data.get("intent"), str):
+        return _fallback_intent_data()
+
+    if "confidence" not in data or not isinstance(data.get("confidence"), (int, float)):
+        return _fallback_intent_data()
+
+    try:
+        conf = float(data["confidence"])
+        if not (0.0 <= conf <= 1.0):
+            return _fallback_intent_data()
+    except (TypeError, ValueError):
+        return _fallback_intent_data()
+
+    if not isinstance(data.get("arguments"), dict):
+        data["arguments"] = {}
+
+    return data
 
 
 # ---------------------------------------------------------------------
@@ -229,7 +294,7 @@ def plan_query(query: str) -> IntentPlan:
         + query
     )
 
-    data: dict[str, Any] = json.loads(raw)
+    data = _parse_llm_json(raw)
 
     # ------------------------------------------------------------------
     # Deterministic rescue: if the LLM returned "unknown" but the
@@ -307,4 +372,7 @@ def plan_query(query: str) -> IntentPlan:
         if arguments.get("operation") == "count":
             arguments.pop("aggregation", None)
 
-    return IntentPlan.model_validate(data)
+    try:
+        return IntentPlan.model_validate(data)
+    except (ValidationError, TypeError, ValueError):
+        return IntentPlan(intent="unknown", confidence=0.0)

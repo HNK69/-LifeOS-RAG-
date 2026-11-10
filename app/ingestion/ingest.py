@@ -200,10 +200,11 @@ def _process_text_document(file_path, file_hash):
         str(file_path),
     )
 
+    metadata = None
     try:
         from knowledge.analyzer import analyze_document
 
-        analyze_document(
+        metadata = analyze_document(
             file_path,
             text=cleaned_text,
             extract_graph=True,
@@ -219,6 +220,7 @@ def _process_text_document(file_path, file_hash):
         file_path,
         file_hash,
         chunk_count=len(chunks),
+        metadata=metadata,
     )
 
     logger.info(

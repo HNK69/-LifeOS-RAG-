@@ -56,4 +56,4 @@ def analyze_document(
                 exc,
             )
 
-    return normalize_metadata(metadata)
+    return normalize_metadata(metadata, file_path=file_path)

@@ -101,6 +101,7 @@ def execute_plan(query: str, plan: IntentPlan) -> QueryResult:
     )
 
 
-def route_intelligent(query: str) -> QueryResult:
-    plan = plan_query(query)
+def route_intelligent(query: str, plan: IntentPlan | None = None) -> QueryResult:
+    if plan is None:
+        plan = plan_query(query)
     return execute_plan(query, plan)
