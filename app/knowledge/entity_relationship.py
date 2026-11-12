@@ -3,10 +3,10 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from config import DATA_DIR
-
-
-ENTITY_DB = Path(DATA_DIR) / "entities.db"
+try:
+    from config import DATA_DIR, ENTITY_DB
+except ImportError:
+    from app.config import DATA_DIR, ENTITY_DB
 
 try:
     from storage.sqlite import connect_sqlite

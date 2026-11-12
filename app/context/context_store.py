@@ -3,10 +3,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-from app.config import DATA_DIR
-
-
-CONTEXT_DB = Path(DATA_DIR) / "context.db"
+try:
+    from config import DATA_DIR, CONTEXT_DB
+except ImportError:
+    from app.config import DATA_DIR, CONTEXT_DB
 
 try:
     from storage.sqlite import connect_sqlite

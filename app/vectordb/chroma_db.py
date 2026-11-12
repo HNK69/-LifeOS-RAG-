@@ -20,22 +20,65 @@ import json
 
 import chromadb
 
-from config import CHROMA_DIR
+try:
+    from config import CHROMA_DIR
+except ImportError:
+    from app.config import CHROMA_DIR
 
 
 logger = logging.getLogger(__name__)
 
 
-# Persistent ChromaDB client.
+# Persistent ChromaDB client with telemetry disabled.
 client = chromadb.PersistentClient(
-    path=str(CHROMA_DIR)
+    path=str(CHROMA_DIR),
+    settings=chromadb.config.Settings(anonymized_telemetry=False),
 )
 
 
-# Collection containing LifeOS document chunks.
-collection = client.get_or_create_collection(
+# Active collection reference.
+_collection = client.get_or_create_collection(
     name="lifeos_documents"
 )
+
+
+class _CollectionProxy:
+    """
+    Transparent proxy delegating dynamically to the active collection.
+    Allows test isolation and dynamic collection switching without breaking
+    module-level 'from vectordb.chroma_db import collection' references.
+    """
+    def __getattr__(self, name):
+        return getattr(_collection, name)
+
+    def __repr__(self):
+        return repr(_collection)
+
+
+collection = _CollectionProxy()
+
+
+def set_collection(new_collection):
+    """Update active collection reference for test isolation or reconfiguration."""
+    global _collection
+    _collection = new_collection
+
+
+def reset_client(path=None, ephemeral=False):
+    """Reset the client and active collection to a specific path or ephemeral store."""
+    global client, _collection
+    if ephemeral:
+        client = chromadb.EphemeralClient(
+            settings=chromadb.config.Settings(anonymized_telemetry=False)
+        )
+    else:
+        target_path = str(path or CHROMA_DIR)
+        client = chromadb.PersistentClient(
+            path=target_path,
+            settings=chromadb.config.Settings(anonymized_telemetry=False),
+        )
+    _collection = client.get_or_create_collection(name="lifeos_documents")
+    return _collection
 
 
 def _document_id(file_path):

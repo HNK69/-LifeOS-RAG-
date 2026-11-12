@@ -1,6 +1,11 @@
 import re
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+try:
+    from config import CHUNK_SIZE, CHUNK_OVERLAP
+except ImportError:
+    from app.config import CHUNK_SIZE, CHUNK_OVERLAP
+
 def clean_text(text):
     text = re.sub(r"[ \t]+", " ", text)      # collapse spaces/tabs
     text = re.sub(r"\n{3,}", "\n\n", text)   # preserve paragraphs
@@ -9,10 +14,14 @@ def clean_text(text):
 
 # print(cleaned_text)
 
-def chunk_text(text):
+def chunk_text(text, chunk_size=None, chunk_overlap=None):
+    if chunk_size is None:
+        chunk_size = CHUNK_SIZE
+    if chunk_overlap is None:
+        chunk_overlap = CHUNK_OVERLAP
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=150,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
         separators=[
             "\n\n",   # paragraph
             "\n",     # line

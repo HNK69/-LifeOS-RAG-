@@ -52,6 +52,18 @@ def test_schedule_query_passes_personal_context_to_classifier(monkeypatch):
 
     monkeypatch.setattr(
         router,
+        "retrieve_chunks",
+        lambda *args, **kwargs: [
+            {
+                "file_path": "/test/schedule.txt",
+                "source": "schedule.txt",
+                "document": "DBMS class on Monday",
+            }
+        ],
+    )
+
+    monkeypatch.setattr(
+        router,
         "classify_sources",
         fake_classify_sources,
     )

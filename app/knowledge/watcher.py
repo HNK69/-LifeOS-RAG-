@@ -22,6 +22,7 @@ from watchdog.observers import Observer
 
 from config import (
     DOCUMENTS_DIR,
+    WATCHER_DEBOUNCE_SECONDS,
     WATCHER_STABILITY_SECONDS,
     WATCHER_CHECK_INTERVAL_SECONDS,
     WATCHER_MAX_STABILITY_WAIT_SECONDS,
@@ -55,7 +56,7 @@ MAX_STABILITY_WAIT_SECONDS = WATCHER_MAX_STABILITY_WAIT_SECONDS
 # EVENT DEBOUNCING
 # ------------------------------------------------------------
 
-DEBOUNCE_SECONDS = 2.0
+DEBOUNCE_SECONDS = WATCHER_DEBOUNCE_SECONDS
 
 
 class DocumentEventHandler(FileSystemEventHandler):

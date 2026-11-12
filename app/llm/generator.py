@@ -17,32 +17,36 @@ try:
         get_max_file_size_bytes,
         LLM_TIMEOUT_SECONDS,
         LLM_MAX_RETRIES,
+        OPENROUTER_API_KEY,
         OPENROUTER_BASE_URL,
+        OPENROUTER_MODEL,
+        OPENROUTER_VISION_MODEL,
     )
 except ImportError:
     from app.config import (
         get_max_file_size_bytes,
         LLM_TIMEOUT_SECONDS,
         LLM_MAX_RETRIES,
+        OPENROUTER_API_KEY,
         OPENROUTER_BASE_URL,
+        OPENROUTER_MODEL,
+        OPENROUTER_VISION_MODEL,
     )
-
-
-VISION_MODEL = "google/gemma-4-31b-it"
 
 
 load_dotenv()
 
 
 client = OpenAI(
-    api_key=os.getenv("OPENROUTER_API_KEY"),
-    base_url=os.getenv("OPENROUTER_BASE_URL", OPENROUTER_BASE_URL),
+    api_key=OPENROUTER_API_KEY or "dummy-api-key",
+    base_url=OPENROUTER_BASE_URL,
     timeout=float(LLM_TIMEOUT_SECONDS),
     max_retries=int(LLM_MAX_RETRIES),
 )
 
 
-MODEL = "openai/gpt-oss-120b"
+MODEL = OPENROUTER_MODEL
+VISION_MODEL = OPENROUTER_VISION_MODEL
 
 
 def generate_response(prompt):
