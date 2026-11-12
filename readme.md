@@ -403,11 +403,60 @@ New capabilities are accompanied by deterministic tests, while live-LLM behavior
 - [x] Phase 8 — Entity & Relationship Intelligence
 - [x] Phase 9 — Advanced Reasoning & Personal Intelligence
 - [x] Phase 10 — Agentic LifeOS
+- [x] Phase 11 — Product / API / Security Layer
 
 ### Next
 
-- [ ] Phase 11 — Product / API / Security Layer
 - [ ] Phase 12 — Production LifeOS
+
+---
+
+## API & Product Service (Phase 11)
+
+LifeOS exposes a secure, high-performance HTTP REST API built on FastAPI and Uvicorn.
+
+### Starting the API Server
+
+```bash
+uvicorn app.api.server:app --host 127.0.0.1 --port 8000
+```
+
+Interactive OpenAPI documentation is automatically available at:
+- Swagger UI: `http://127.0.0.1:8000/docs`
+- ReDoc: `http://127.0.0.1:8000/redoc`
+
+### API Security & Authentication
+
+All API endpoints (except `/health` and `/ready`) require bearer authentication:
+
+```http
+Authorization: Bearer <LIFEOS_API_KEY>
+```
+
+Or via header:
+```http
+X-API-Key: <LIFEOS_API_KEY>
+```
+
+Administrative operations (e.g. `POST /api/admin/reindex`, `DELETE /api/documents/{filename}`) require elevated admin privileges (`LIFEOS_API_ADMIN_KEY`).
+
+### Core Endpoints
+
+| Method | Path | Auth | Purpose |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/health` | Public | Process liveness probe |
+| `GET` | `/ready` | Public | Subsystem storage & filesystem readiness probe |
+| `POST` | `/api/query` | User / Admin | Natural language query execution with session isolation |
+| `GET` | `/api/documents` | User / Admin | List all registered documents and ingestion statuses |
+| `POST` | `/api/documents` | User / Admin | Multipart upload & automated ingestion pipeline |
+| `DELETE` | `/api/documents/{filename}` | Admin | Coordinated document removal across all stores |
+| `GET` | `/api/context` | User / Admin | List active personal context entries |
+| `POST` | `/api/context` | User / Admin | Upsert personal context key-value item |
+| `DELETE` | `/api/context/{key}` | User / Admin | Delete individual personal context key |
+| `GET` | `/api/people` | User / Admin | List recognized individuals (privacy-shielded) |
+| `POST` | `/api/people/{id}/confirm`| User / Admin | User-confirmed face identity tagging |
+| `GET` | `/api/admin/reindex/status`| Admin | Query active reindex operation status |
+| `POST` | `/api/admin/reindex` | Admin | Trigger full atomic reindex with rollback protection |
 
 ---
 

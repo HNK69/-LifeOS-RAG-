@@ -210,6 +210,25 @@ def clear_context():
         connection.execute("DELETE FROM context")
         connection.commit()
 
+
+def delete_context(key: str) -> bool:
+    """Delete a single context entry by key. Returns True if a record was deleted."""
+    if not key or not str(key).strip():
+        raise ValueError("Context key cannot be empty.")
+
+    initialize_context_store()
+
+    with _connect() as connection:
+        cursor = connection.execute(
+            """
+            DELETE FROM context
+            WHERE key = ?
+            """,
+            (str(key),),
+        )
+        connection.commit()
+        return cursor.rowcount > 0
+
 def get_active_context(at_time=None):
     """Return context entries active at the supplied timestamp."""
     initialize_context_store()

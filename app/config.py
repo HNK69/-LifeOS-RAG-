@@ -68,6 +68,26 @@ def _get_env_path(key: str, default: Path) -> Path:
     return Path(val.strip())
 
 
+def _get_env_bool(key: str, default: bool) -> bool:
+    val = os.getenv(key)
+    if val is None or val.strip() == "":
+        return default
+    v = val.strip().lower()
+    if v in {"true", "1", "yes", "y", "on"}:
+        return True
+    if v in {"false", "0", "no", "n", "off"}:
+        return False
+    raise ValueError(f"Invalid configuration for {key}: '{val}' is not a valid boolean")
+
+
+def _get_env_list(key: str, default: list) -> list:
+    val = os.getenv(key)
+    if val is None or val.strip() == "":
+        return list(default)
+    items = [item.strip() for item in val.replace(";", ",").split(",") if item.strip()]
+    return items if items else list(default)
+
+
 # ============================================================
 # PROJECT PATHS
 # ============================================================
@@ -317,6 +337,59 @@ FACE_MATCH_THRESHOLD = _get_env_float(
 
 
 # ============================================================
+# API & PRODUCT LAYER (PHASE 11)
+# ============================================================
+
+API_HOST = _get_env_str("LIFEOS_API_HOST", "127.0.0.1")
+API_PORT = _get_env_int("LIFEOS_API_PORT", 8000, min_val=1024, max_val=65535)
+API_WORKERS = _get_env_int("LIFEOS_API_WORKERS", 1, min_val=1, max_val=16)
+
+# In production, API authentication should always be enabled.
+# For testing or special local environments, LIFEOS_API_AUTH_ENABLED can toggle this.
+API_AUTH_ENABLED = _get_env_bool("LIFEOS_API_AUTH_ENABLED", True)
+
+# Primary API key for clients
+API_KEY = os.getenv("LIFEOS_API_KEY", "")
+# Distinct administrative API key for elevated operations like reindexing
+API_ADMIN_KEY = os.getenv("LIFEOS_API_ADMIN_KEY", "")
+
+# Rate limiting
+API_RATE_LIMIT = _get_env_int("LIFEOS_API_RATE_LIMIT", 60, min_val=1)
+API_RATE_WINDOW_SECONDS = _get_env_int("LIFEOS_API_RATE_WINDOW_SECONDS", 60, min_val=1)
+
+# Request size limits (default 10MB)
+API_MAX_REQUEST_BYTES = _get_env_int("LIFEOS_API_MAX_REQUEST_BYTES", 10 * 1024 * 1024, min_val=1024)
+
+# Maximum query length in characters
+API_MAX_QUERY_LENGTH = _get_env_int("LIFEOS_API_MAX_QUERY_LENGTH", 4096, min_val=1)
+
+# CORS and Network
+API_CORS_ORIGINS = _get_env_list(
+    "LIFEOS_API_CORS_ORIGINS",
+    ["http://localhost:3000", "http://127.0.0.1:3000"],
+)
+API_ALLOWED_METHODS = _get_env_list(
+    "LIFEOS_API_ALLOWED_METHODS",
+    ["GET", "POST", "DELETE", "OPTIONS"],
+)
+API_ALLOWED_HEADERS = _get_env_list(
+    "LIFEOS_API_ALLOWED_HEADERS",
+    ["*"],
+)
+API_TRUSTED_HOSTS = _get_env_list(
+    "LIFEOS_API_TRUSTED_HOSTS",
+    ["localhost", "127.0.0.1", "testserver"],
+)
+
+API_LOG_REQUESTS = _get_env_bool("LIFEOS_API_LOG_REQUESTS", True)
+API_ENVIRONMENT = _get_env_str(
+    "LIFEOS_API_ENVIRONMENT",
+    "development",
+    allowed={"development", "testing", "staging", "production"},
+)
+
+
+# ============================================================
 # VALIDATION
 # ============================================================
 
@@ -337,6 +410,11 @@ def validate_config():
             f"Invalid configuration: WATCHER_MAX_STABILITY_WAIT_SECONDS ({WATCHER_MAX_STABILITY_WAIT_SECONDS}) "
             f"must be >= WATCHER_STABILITY_SECONDS ({WATCHER_STABILITY_SECONDS})"
         )
+    if API_ENVIRONMENT == "production" and API_AUTH_ENABLED:
+        if not API_KEY or len(API_KEY.strip()) < 16:
+            raise ValueError(
+                "Invalid configuration: LIFEOS_API_KEY must be configured with at least 16 characters in production environment"
+            )
 
 
 validate_config()

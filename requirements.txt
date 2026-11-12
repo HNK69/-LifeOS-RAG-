@@ -61,3 +61,10 @@ MarkupSafe==3.0.3
 regex==2026.7.19
 joblib==1.5.3
 threadpoolctl==3.6.0
+
+# --- API / Product Layer (Phase 11) ---
+fastapi==0.162.5
+uvicorn==0.52.1
+python-multipart==0.0.33
+httpx==0.28.1
+starlette==1.10.0
