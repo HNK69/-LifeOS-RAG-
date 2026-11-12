@@ -46,23 +46,55 @@ from app.api.middleware import (
     RequestSizeLimiterMiddleware,
     SecurityHeadersMiddleware,
 )
-from app.api.routes import admin, context, documents, health, people, query
+from app.api.routes import admin, context, documents, health, metrics, people, query
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifecycle startup and shutdown management."""
+    """Lifecycle startup and shutdown management for LifeOS."""
+    # 1. Startup: setup logging format and optional background watcher
+    try:
+        import config
+        log_fmt = getattr(config, "LOG_FORMAT", "text")
+        watcher_enabled = getattr(config, "WATCHER_ENABLED", False)
+    except ImportError:
+        from app import config
+        log_fmt = getattr(config, "LOG_FORMAT", "text")
+        watcher_enabled = getattr(config, "WATCHER_ENABLED", False)
+
+    try:
+        from app.ops.logging import setup_logging
+        setup_logging(log_fmt)
+    except Exception:
+        pass
+
+    if watcher_enabled:
+        try:
+            from app.knowledge.watcher import start_background_watcher
+            start_background_watcher(run_initial_ingest=False)
+        except Exception:
+            pass
+
     yield
-    # Graceful shutdown of agent executor pool if active
+
+    # 2. Graceful Shutdown
+    # Stop background watcher if running
+    try:
+        from app.knowledge.watcher import stop_background_watcher
+        stop_background_watcher(timeout=5.0)
+    except Exception:
+        pass
+
+    # Shutdown agent executor pool cleanly
     try:
         from app.agent.runner import shutdown_agent_executor
-        shutdown_agent_executor(wait=False, cancel_futures=True)
+        shutdown_agent_executor(wait=True, cancel_futures=True)
     except Exception:
         pass
 
 
 def create_app() -> FastAPI:
-    """Application factory for the LifeOS Phase 11 API."""
+    """Application factory for the LifeOS Phase 11 / Phase 12 API."""
     app = FastAPI(
         title="LifeOS API",
         description="Secure programmatic HTTP boundary for the LifeOS personal intelligence platform.",
@@ -106,6 +138,7 @@ def create_app() -> FastAPI:
 
     # 3. Mount Route Controllers
     app.include_router(health.router)
+    app.include_router(metrics.router)
     app.include_router(query.router)
     app.include_router(documents.router)
     app.include_router(context.router)

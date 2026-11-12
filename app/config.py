@@ -390,6 +390,16 @@ API_ENVIRONMENT = _get_env_str(
 
 
 # ============================================================
+# PRODUCTION & OPERATIONS LAYER (PHASE 12)
+# ============================================================
+
+BACKUP_DIR = _get_env_path("LIFEOS_BACKUP_DIR", DATA_DIR / "backups")
+LOG_FORMAT = _get_env_str("LIFEOS_LOG_FORMAT", "text", allowed={"text", "json"})
+WATCHER_ENABLED = _get_env_bool("LIFEOS_WATCHER_ENABLED", False)
+METRICS_ENABLED = _get_env_bool("LIFEOS_METRICS_ENABLED", True)
+
+
+# ============================================================
 # VALIDATION
 # ============================================================
 
@@ -410,10 +420,40 @@ def validate_config():
             f"Invalid configuration: WATCHER_MAX_STABILITY_WAIT_SECONDS ({WATCHER_MAX_STABILITY_WAIT_SECONDS}) "
             f"must be >= WATCHER_STABILITY_SECONDS ({WATCHER_STABILITY_SECONDS})"
         )
-    if API_ENVIRONMENT == "production" and API_AUTH_ENABLED:
+    if API_ENVIRONMENT == "production":
+        if API_WORKERS > 1:
+            raise ValueError(
+                f"Invalid configuration: Multi-worker execution (LIFEOS_API_WORKERS={API_WORKERS}) "
+                "is not supported in single-process architecture. Must be 1."
+            )
+        if not API_AUTH_ENABLED:
+            raise ValueError(
+                "Invalid configuration: LIFEOS_API_AUTH_ENABLED cannot be disabled in production environment"
+            )
         if not API_KEY or len(API_KEY.strip()) < 16:
             raise ValueError(
                 "Invalid configuration: LIFEOS_API_KEY must be configured with at least 16 characters in production environment"
+            )
+        if not API_ADMIN_KEY or len(API_ADMIN_KEY.strip()) < 16:
+            raise ValueError(
+                "Invalid configuration: LIFEOS_API_ADMIN_KEY must be configured with at least 16 characters in production environment"
+            )
+        if API_KEY == API_ADMIN_KEY:
+            raise ValueError(
+                "Invalid configuration: LIFEOS_API_KEY and LIFEOS_API_ADMIN_KEY must be distinct in production environment"
+            )
+        openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+        if not openrouter_key:
+            raise ValueError(
+                "Invalid configuration: OPENROUTER_API_KEY must be configured in production environment"
+            )
+        if "*" in API_CORS_ORIGINS:
+            raise ValueError(
+                "Invalid configuration: Wildcard '*' in LIFEOS_API_CORS_ORIGINS is forbidden in production environment"
+            )
+        if "*" in API_TRUSTED_HOSTS or "testserver" in API_TRUSTED_HOSTS:
+            raise ValueError(
+                "Invalid configuration: Wildcard '*' or 'testserver' in LIFEOS_API_TRUSTED_HOSTS is forbidden in production environment"
             )
 
 

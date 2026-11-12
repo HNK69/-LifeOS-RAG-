@@ -260,4 +260,16 @@ class AuditLoggingMiddleware(BaseHTTPMiddleware):
                 request_id,
             )
 
+        # Record operational metrics
+        try:
+            from app.ops.metrics import metrics_collector
+            metrics_collector.record_request(
+                method=request.method,
+                path=request.url.path,
+                status_code=response.status_code,
+                duration_ms=duration_ms,
+            )
+        except Exception:
+            pass
+
         return response

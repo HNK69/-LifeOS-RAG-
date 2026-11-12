@@ -381,72 +381,94 @@ class DocumentEventHandler(FileSystemEventHandler):
         )
 
 
+# ------------------------------------------------------------
+# LIFECYCLE MANAGEMENT
+# ------------------------------------------------------------
+
+_active_observer: Observer | None = None
+_observer_lock = threading.Lock()
+
+
+def is_watcher_running() -> bool:
+    """Check if the background observer is actively running."""
+    with _observer_lock:
+        return _active_observer is not None and _active_observer.is_alive()
+
+
+def start_background_watcher(
+    documents_dir: Path | str | None = None,
+    run_initial_ingest: bool = True,
+) -> Observer:
+    """
+    Start the LifeOS document watcher asynchronously in the background.
+    Thread-safe and idempotent (returns existing observer if already running).
+    """
+    global _active_observer
+    with _observer_lock:
+        if _active_observer is not None and _active_observer.is_alive():
+            logger.info("Background watcher is already running.")
+            return _active_observer
+
+        target_dir = Path(documents_dir or DOCUMENTS_DIR).resolve()
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        if run_initial_ingest:
+            logger.info("Running initial incremental ingestion for watcher...")
+            try:
+                ingest_documents(documents_dir=target_dir)
+            except Exception as exc:
+                logger.warning("Initial ingestion encountered an issue: %s", exc)
+
+        event_handler = DocumentEventHandler(target_dir)
+        observer = Observer()
+        observer.schedule(event_handler, str(target_dir), recursive=True)
+        observer.daemon = True
+        observer.start()
+
+        _active_observer = observer
+        logger.info("LifeOS background document watcher started: %s", target_dir)
+        return _active_observer
+
+
+def stop_background_watcher(timeout: float = 5.0) -> bool:
+    """
+    Stop the active background watcher cleanly and join observer threads.
+    Idempotent and safe to invoke multiple times during graceful shutdown.
+    """
+    global _active_observer
+    with _observer_lock:
+        if _active_observer is None:
+            return False
+
+        observer = _active_observer
+        _active_observer = None
+
+    try:
+        if observer.is_alive():
+            observer.stop()
+            observer.join(timeout=timeout)
+        logger.info("LifeOS background document watcher stopped.")
+        return True
+    except Exception as exc:
+        logger.warning("Error stopping background watcher: %s", exc)
+        return False
+
+
 def start_watcher(
     documents_dir=DOCUMENTS_DIR
 ):
     """
-    Start the LifeOS document watcher.
-
-    Performs one initial incremental synchronization,
-    then switches to targeted filesystem processing.
+    Start the LifeOS document watcher in blocking mode (CLI).
     """
-
-    documents_dir = Path(
-        documents_dir
-    ).resolve()
-
-    documents_dir.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    logger.info(
-        "Running initial incremental ingestion..."
-    )
-
-    ingest_documents(
-        documents_dir=documents_dir
-    )
-
-    event_handler = DocumentEventHandler(
-        documents_dir
-    )
-
-    observer = Observer()
-
-    observer.schedule(
-        event_handler,
-        str(documents_dir),
-        recursive=True,
-    )
-
-    observer.start()
-
-    logger.info(
-        "LifeOS document watcher started: %s",
-        documents_dir,
-    )
-
+    start_background_watcher(documents_dir=documents_dir, run_initial_ingest=True)
     try:
-
-        while True:
+        while is_watcher_running():
             time.sleep(1)
-
     except KeyboardInterrupt:
-
-        logger.info(
-            "Stopping LifeOS document watcher..."
-        )
-
-        observer.stop()
-
+        logger.info("Stopping LifeOS document watcher...")
     finally:
-
-        observer.join()
-
-        logger.info(
-            "LifeOS document watcher stopped."
-        )
+        stop_background_watcher()
+        logger.info("LifeOS document watcher stopped.")
 
 
 if __name__ == "__main__":

@@ -404,14 +404,50 @@ New capabilities are accompanied by deterministic tests, while live-LLM behavior
 - [x] Phase 9 — Advanced Reasoning & Personal Intelligence
 - [x] Phase 10 — Agentic LifeOS
 - [x] Phase 11 — Product / API / Security Layer
-
-### Next
-
-- [ ] Phase 12 — Production LifeOS
+- [x] Phase 12 — Production LifeOS
 
 ---
 
-## API & Product Service (Phase 11)
+## Supported Runtime
+
+- **Python**: 3.11, 3.12, 3.13, 3.14 (Verified and tested on Python 3.14.3)
+- **Architecture**: Single-node, single-process ASGI (`LIFEOS_API_WORKERS=1`)
+- **Persistence**: SQLite 3.35+ (WAL mode, busy timeout 10s) and ChromaDB persistent vector index
+
+---
+
+## Production Deployment & Operations (Phase 12)
+
+LifeOS is production-hardened with containerized packaging, automated atomic backups, structured observability, and health probes.
+
+### Operational Runbook
+For complete production runbook instructions covering startup, shutdown, disaster recovery, secret rotation, and incident responses, see [RUNBOOK.md](file:///C:/Users/hnkru/OneDrive/Desktop/LifeOS/RUNBOOK.md).
+
+### Docker Deployment
+```bash
+docker build -t lifeos:latest .
+docker run -d \
+  --name lifeos \
+  -p 8000:8000 \
+  --env-file .env \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/chroma_db:/app/chroma_db \
+  lifeos:latest
+```
+
+### Point-in-Time Coordinated Backup & Restore
+
+```bash
+# Create consistent point-in-time snapshot
+python -c "from app.storage.backup import create_backup; print(create_backup())"
+
+# Restore from backup archive
+python -c "from app.storage.backup import restore_backup; print(restore_backup('path/to/lifeos_backup.tar.gz'))"
+```
+
+---
+
+## API & Product Service (Phase 11 / Phase 12)
 
 LifeOS exposes a secure, high-performance HTTP REST API built on FastAPI and Uvicorn.
 
@@ -445,7 +481,9 @@ Administrative operations (e.g. `POST /api/admin/reindex`, `DELETE /api/document
 | Method | Path | Auth | Purpose |
 | :--- | :--- | :--- | :--- |
 | `GET` | `/health` | Public | Process liveness probe |
+| `GET` | `/live` | Public | Minimal container liveness probe |
 | `GET` | `/ready` | Public | Subsystem storage & filesystem readiness probe |
+| `GET` | `/metrics` | Admin | Operational metrics & performance telemetry |
 | `POST` | `/api/query` | User / Admin | Natural language query execution with session isolation |
 | `GET` | `/api/documents` | User / Admin | List all registered documents and ingestion statuses |
 | `POST` | `/api/documents` | User / Admin | Multipart upload & automated ingestion pipeline |

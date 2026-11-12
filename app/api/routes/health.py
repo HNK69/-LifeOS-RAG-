@@ -34,6 +34,19 @@ async def health_check():
 
 
 @router.get(
+    "/live",
+    response_model=HealthResponse,
+    summary="Minimal Liveness Probe",
+    description="Returns 200 to verify the process is alive for container orchestrators.",
+)
+async def live_check():
+    return HealthResponse(
+        status="live",
+        timestamp=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+@router.get(
     "/ready",
     response_model=ReadinessResponse,
     summary="Subsystem Readiness Probe",
