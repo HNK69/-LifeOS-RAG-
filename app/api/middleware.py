@@ -11,6 +11,7 @@ Production-grade Starlette/FastAPI middleware for LifeOS Phase 11:
 
 import logging
 import re
+import threading
 import time
 import uuid
 from collections import defaultdict
@@ -76,7 +77,17 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+
+        # Strict-Transport-Security is only sent over genuine HTTPS connections
+        is_https = (
+            request.url.scheme == "https"
+            or request.headers.get("x-forwarded-proto", "").lower() == "https"
+        )
+        if is_https:
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
         return response
 
 
@@ -86,7 +97,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 class RateLimiter:
     """
-    In-process sliding-window rate limiter.
+    In-process sliding-window rate limiter with bounded memory cleanup.
     Keyed by client IP or Bearer token prefix.
     """
 
@@ -94,6 +105,7 @@ class RateLimiter:
         self.limit = limit
         self.window_seconds = window_seconds
         self.history: dict[str, list[float]] = defaultdict(list)
+        self._lock = threading.Lock()
 
     def is_allowed(self, key: str) -> tuple[bool, int]:
         """
@@ -111,21 +123,34 @@ class RateLimiter:
         now = time.time()
         window_start = now - window
 
-        # Clean entries older than window
-        timestamps = [t for t in self.history[key] if t > window_start]
-        self.history[key] = timestamps
+        with self._lock:
+            # Clean entries older than window
+            timestamps = [t for t in self.history.get(key, []) if t > window_start]
+            if not timestamps and key in self.history:
+                self.history.pop(key, None)
 
-        if len(timestamps) >= limit:
-            oldest = timestamps[0]
-            retry_after = int(oldest + window - now) + 1
-            return False, max(1, retry_after)
+            # Bounded memory safeguard: prune inactive keys when dictionary grows large
+            if len(self.history) > 5000:
+                stale_keys = [
+                    k for k, ts in self.history.items()
+                    if not ts or ts[-1] <= window_start
+                ]
+                for k in stale_keys:
+                    self.history.pop(k, None)
 
-        self.history[key].append(now)
-        return True, 0
+            if len(timestamps) >= limit:
+                oldest = timestamps[0]
+                retry_after = int(oldest + window - now) + 1
+                return False, max(1, retry_after)
+
+            timestamps.append(now)
+            self.history[key] = timestamps
+            return True, 0
 
     def reset(self):
         """Clear rate limiter state (used in testing)."""
-        self.history.clear()
+        with self._lock:
+            self.history.clear()
 
 
 rate_limiter = RateLimiter(
@@ -144,8 +169,11 @@ class RateLimitingMiddleware(BaseHTTPMiddleware):
 
         # Derive rate limit key from auth token or remote host
         auth = request.headers.get("Authorization")
+        x_api_key = request.headers.get("X-API-Key")
         if auth and "Bearer " in auth:
             client_key = "token:" + auth.replace("Bearer ", "").strip()[:8]
+        elif x_api_key:
+            client_key = "token:" + x_api_key.strip()[:8]
         else:
             client_key = "ip:" + (request.client.host if request.client else "unknown")
 

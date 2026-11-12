@@ -138,6 +138,17 @@ def test_query_validation_rejects_empty_query(client):
     assert res.json()["error"]["code"] == "validation_error"
 
 
+def test_query_validation_rejects_whitespace_query(client):
+    res = client.post(
+        "/api/query",
+        headers={"Authorization": f"Bearer {TEST_API_KEY}"},
+        json={"query": "   \n\t  "},
+    )
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+    assert "whitespace" in res.json()["error"]["message"]
+
+
 def test_query_validation_rejects_oversized_query(client):
     res = client.post(
         "/api/query",
@@ -211,6 +222,22 @@ def test_query_session_isolation_across_clients(client, monkeypatch):
         json={"query": "query 2"},
     )
     assert res1_2.json()["answer"] == "Count: 2"
+
+    # Session 3 - via body payload (no X-Session-ID header)
+    res3_1 = client.post(
+        "/api/query",
+        headers={"Authorization": f"Bearer {TEST_API_KEY}"},
+        json={"query": "query 1", "session_id": "body-session-3"},
+    )
+    assert res3_1.json()["answer"] == "Count: 1"
+    assert res3_1.json()["session_id"] == "body-session-3"
+
+    res3_2 = client.post(
+        "/api/query",
+        headers={"Authorization": f"Bearer {TEST_API_KEY}"},
+        json={"query": "query 2", "session_id": "body-session-3"},
+    )
+    assert res3_2.json()["answer"] == "Count: 2"
 
 
 # ============================================================
@@ -314,6 +341,18 @@ def test_context_crud_endpoints(client):
     )
     assert del_missing.status_code == 404
 
+    # 5. Setting whitespace key returns 422
+    ws_res = client.post(
+        "/api/context",
+        headers={"Authorization": f"Bearer {TEST_API_KEY}"},
+        json={
+            "key": "   ",
+            "value": "invalid",
+        },
+    )
+    assert ws_res.status_code == 422
+    assert "whitespace" in ws_res.json()["error"]["message"]
+
 
 # ============================================================
 # 5. PEOPLE ENDPOINTS & PRIVACY
@@ -378,6 +417,15 @@ def test_people_confirm_identity(client, monkeypatch):
         json={"name": "Ghost"},
     )
     assert res_404.status_code == 404
+
+    # Confirm whitespace name returns 422
+    res_ws = client.post(
+        "/api/people/valid-pid/confirm",
+        headers={"Authorization": f"Bearer {TEST_API_KEY}"},
+        json={"name": "   "},
+    )
+    assert res_ws.status_code == 422
+    assert "whitespace" in res_ws.json()["error"]["message"]
 
 
 # ============================================================
@@ -478,6 +526,22 @@ def test_rate_limiting_enforcement(client, monkeypatch):
     assert res_blocked.json()["error"]["code"] == "rate_limit_exceeded"
     assert "Retry-After" in res_blocked.headers
     assert int(res_blocked.headers["Retry-After"]) > 0
+
+
+def test_rate_limiting_enforcement_via_x_api_key(client, monkeypatch):
+    monkeypatch.setattr(config, "API_RATE_LIMIT", 2)
+    monkeypatch.setattr(config, "API_RATE_WINDOW_SECONDS", 60)
+    rate_limiter.limit = 2
+    rate_limiter.window_seconds = 60
+    rate_limiter.reset()
+
+    headers = {"X-API-Key": TEST_API_KEY}
+    assert client.get("/api/documents", headers=headers).status_code == 200
+    assert client.get("/api/documents", headers=headers).status_code == 200
+
+    res_blocked = client.get("/api/documents", headers=headers)
+    assert res_blocked.status_code == 429
+    assert res_blocked.json()["error"]["code"] == "rate_limit_exceeded"
 
 
 # ============================================================

@@ -6,7 +6,7 @@ Strict validation for requests and safe, normalized structures for responses.
 """
 
 from typing import Any
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # ============================================================
@@ -32,6 +32,13 @@ class QueryRequest(BaseModel):
         max_length=128,
         description="Optional client-specified user identifier",
     )
+
+    @field_validator("query")
+    @classmethod
+    def validate_query_not_whitespace(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Query cannot be empty or purely whitespace")
+        return v.strip()
 
 
 class QueryResponse(BaseModel):
@@ -95,6 +102,13 @@ class ContextSetRequest(BaseModel):
     valid_from: str | None = Field(None, max_length=64)
     valid_until: str | None = Field(None, max_length=64)
 
+    @field_validator("key")
+    @classmethod
+    def validate_key_not_whitespace(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Context key cannot be empty or purely whitespace")
+        return v.strip()
+
 
 class ContextListResponse(BaseModel):
     context: dict[str, Any]
@@ -128,6 +142,13 @@ class PersonConfirmRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(..., min_length=1, max_length=256)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name_not_whitespace(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Person name cannot be empty or purely whitespace")
+        return v.strip()
 
 
 class PersonConfirmResponse(BaseModel):

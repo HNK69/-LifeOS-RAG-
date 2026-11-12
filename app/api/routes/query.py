@@ -10,7 +10,12 @@ from typing import Any
 from fastapi import APIRouter, Depends
 
 from app import main
-from app.api.dependencies import RequestContext, get_request_context, require_auth
+from app.api.dependencies import (
+    RequestContext,
+    get_or_create_session,
+    get_request_context,
+    require_auth,
+)
 from app.api.schemas import QueryRequest, QueryResponse
 
 router = APIRouter(prefix="/api", tags=["Query"])
@@ -53,13 +58,20 @@ async def process_query(
     ctx: RequestContext = Depends(get_request_context),
     _user=Depends(require_auth),
 ):
+    # Support session_id specified via body payload or X-Session-ID header
+    active_session_id = body.session_id or ctx.session_id
+    if body.session_id and body.session_id != ctx.session_id:
+        active_session = get_or_create_session(ctx.user, active_session_id)
+    else:
+        active_session = ctx.session_data
+
     # Pass isolated session dictionary to existing core handler
     answer = main.handle_query(
         query=body.query,
-        session=ctx.session_data,
+        session=active_session,
     )
 
-    last_result = ctx.session_data.get("last_result")
+    last_result = active_session.get("last_result")
     answer_type = getattr(last_result, "answer_type", "unknown") if last_result else "unknown"
     safe_data = _extract_safe_data(last_result)
 
@@ -67,7 +79,7 @@ async def process_query(
         query=body.query,
         answer=answer,
         answer_type=answer_type,
-        session_id=ctx.session_id,
+        session_id=active_session_id,
         request_id=ctx.request_id,
         data=safe_data,
     )

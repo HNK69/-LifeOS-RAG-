@@ -88,19 +88,27 @@ async def upload_document(
         docs_dir = Path(DOCUMENTS_DIR)
 
     target_path = docs_dir / safe_name
-    max_bytes = get_max_file_size_bytes(target_path)
+    try:
+        valid_path = validate_document_path(target_path, base_dir=docs_dir, must_exist=False)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid document target path: {exc}",
+        )
+
+    max_bytes = get_max_file_size_bytes(valid_path)
 
     # Stream file to disk while enforcing max_bytes limit
     total_bytes = 0
-    target_path.parent.mkdir(parents=True, exist_ok=True)
+    valid_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        with open(target_path, "wb") as out_file:
+        with open(valid_path, "wb") as out_file:
             while chunk := await file.read(64 * 1024):
                 total_bytes += len(chunk)
                 if total_bytes > max_bytes:
                     out_file.close()
-                    target_path.unlink(missing_ok=True)
+                    valid_path.unlink(missing_ok=True)
                     raise HTTPException(
                         status_code=413,
                         detail=f"File exceeds maximum allowed size for its type ({max_bytes} bytes)",
@@ -109,7 +117,7 @@ async def upload_document(
     except HTTPException:
         raise
     except Exception as exc:
-        target_path.unlink(missing_ok=True)
+        valid_path.unlink(missing_ok=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to save uploaded file: {exc}",
@@ -117,7 +125,7 @@ async def upload_document(
 
     # Execute existing ingestion pipeline
     try:
-        result = ingest_file(target_path)
+        result = ingest_file(valid_path)
         chunks_count = result.get("chunks") if isinstance(result, dict) else None
         return DocumentUploadResponse(
             filename=safe_name,

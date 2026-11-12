@@ -55,6 +55,20 @@ def require_admin(user: AuthenticatedUser = Depends(authenticate_request)) -> Au
     return user
 
 
+def get_or_create_session(user: AuthenticatedUser, session_id: str) -> dict[str, Any]:
+    """Retrieve or initialize an in-memory session state dict for a given user and session_id."""
+    cache_key = (user.tenant_id, user.user_id, session_id)
+    if cache_key not in _session_cache:
+        # Bounded cleanup if session cache exceeds 10,000 entries
+        if len(_session_cache) > 10000:
+            # Evict oldest entries
+            keys_to_remove = list(_session_cache.keys())[:2000]
+            for k in keys_to_remove:
+                _session_cache.pop(k, None)
+        _session_cache[cache_key] = {}
+    return _session_cache[cache_key]
+
+
 def get_request_context(
     request: Request,
     user: AuthenticatedUser = Depends(authenticate_request),
@@ -66,18 +80,7 @@ def get_request_context(
     """
     request_id = getattr(request.state, "request_id", uuid.uuid4().hex)
     session_id = x_session_id or str(uuid.uuid4())
-
-    cache_key = (user.tenant_id, user.user_id, session_id)
-    if cache_key not in _session_cache:
-        # Bounded cleanup if session cache exceeds 10,000 entries
-        if len(_session_cache) > 10000:
-            # Evict oldest entries
-            keys_to_remove = list(_session_cache.keys())[:2000]
-            for k in keys_to_remove:
-                _session_cache.pop(k, None)
-        _session_cache[cache_key] = {}
-
-    session_data = _session_cache[cache_key]
+    session_data = get_or_create_session(user, session_id)
 
     return RequestContext(
         request_id=request_id,

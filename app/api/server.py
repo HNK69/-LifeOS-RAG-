@@ -76,17 +76,17 @@ def create_app() -> FastAPI:
     # 1. Register centralized error handlers
     register_error_handlers(app)
 
-    # 2. Add Middlewares (order: outermost to innermost)
-    # Logging
-    app.add_middleware(AuditLoggingMiddleware)
+    # 2. Add Middlewares (in reverse order: innermost added first, outermost added last)
+    # Request body size limiter (innermost)
+    app.add_middleware(RequestSizeLimiterMiddleware)
     # Rate limiting
     app.add_middleware(RateLimitingMiddleware)
-    # Request body size limiter
-    app.add_middleware(RequestSizeLimiterMiddleware)
     # Security response headers
     app.add_middleware(SecurityHeadersMiddleware)
     # Request ID tracking
     app.add_middleware(RequestIDMiddleware)
+    # Audit Logging (wraps downstream handlers, rate limiting, and size rejection)
+    app.add_middleware(AuditLoggingMiddleware)
 
     # Trusted hosts protection
     if API_TRUSTED_HOSTS and "*" not in API_TRUSTED_HOSTS:
