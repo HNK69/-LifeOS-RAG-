@@ -420,6 +420,22 @@ METRICS_ENABLED = _get_env_bool("LIFEOS_METRICS_ENABLED", True)
 
 
 # ============================================================
+# HYBRID ROUTING & PRIVACY GATEKEEPER (MILESTONE 7)
+# ============================================================
+
+ROUTING_MODE = _get_env_str(
+    "LIFEOS_ROUTING_MODE",
+    "hybrid_cascade",
+    allowed={"local_only", "local_first", "cloud_with_gatekeeper", "hybrid_cascade"},
+)
+LOCAL_LLM_URL = _get_env_str("LIFEOS_LOCAL_LLM_URL", "http://localhost:11434/v1")
+LOCAL_LLM_MODEL = _get_env_str("LIFEOS_LOCAL_LLM_MODEL", "llama3.2:1b")
+DAILY_CLOUD_BUDGET_USD = _get_env_float("LIFEOS_DAILY_CLOUD_BUDGET_USD", 1.0, min_val=0.01)
+PII_REDACTION_ENABLED = _get_env_bool("LIFEOS_PII_REDACTION_ENABLED", True)
+ROUTING_BUDGET_FILE = _get_env_path("LIFEOS_ROUTING_BUDGET_FILE", DATA_DIR / "routing_budget.json")
+
+
+# ============================================================
 # VALIDATION
 # ============================================================
 

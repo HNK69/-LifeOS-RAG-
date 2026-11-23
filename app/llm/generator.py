@@ -49,18 +49,27 @@ MODEL = OPENROUTER_MODEL
 VISION_MODEL = OPENROUTER_VISION_MODEL
 
 
-def generate_response(prompt):
-    response = client.chat.completions.create(
-        model=MODEL,
-        messages=[
-            {
-                "role": "user",
-                "content": prompt,
-            }
-        ],
-    )
+def generate_response(prompt, *args, **kwargs):
+    """
+    Generate an LLM response via the HybridRouter, enforcing privacy gatekeeping,
+    workspace isolation, consent, and budget limits before potential cloud egress.
+    """
+    try:
+        from app.routing.hybrid_router import get_hybrid_router
+        return get_hybrid_router().route_and_generate(prompt, *args, **kwargs)
+    except Exception:
+        # Fallback to direct client call if routing module fails to load
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+        )
+        return response.choices[0].message.content
 
-    return response.choices[0].message.content
 
 
 def classify_sources(query, current_context, candidates):

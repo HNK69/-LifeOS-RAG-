@@ -442,3 +442,52 @@ class WorkspaceMemberResponse(BaseModel):
     user_id: str
     role: str
     joined_at: str
+
+
+# ============================================================
+# HYBRID ROUTING & PRIVACY GATEKEEPER SCHEMAS (Milestone 7)
+# ============================================================
+
+class RoutingPolicyResponse(BaseModel):
+    routing_mode: str
+    local_llm_url: str
+    local_llm_model: str
+    daily_budget_usd: float
+    pii_redaction_enabled: bool
+
+
+class RoutingPolicyUpdateRequest(BaseModel):
+    routing_mode: str | None = Field(None, pattern="^(local_only|local_first|cloud_with_gatekeeper|hybrid_cascade)$")
+    daily_budget_usd: float | None = Field(None, ge=0.01, le=1000.0)
+    pii_redaction_enabled: bool | None = None
+
+
+class GatekeeperInspectRequest(BaseModel):
+    text: str = Field(..., min_length=1)
+    dry_run: bool = True
+
+
+class DetectedPIIItem(BaseModel):
+    category: str
+    start: int
+    end: int
+    placeholder: str
+
+
+class GatekeeperInspectResponse(BaseModel):
+    entities: list[DetectedPIIItem]
+    sensitivity_level: str
+    scrubbed_text: str
+    cloud_egress_allowed: bool
+    reason: str
+
+
+class RoutingMetricsResponse(BaseModel):
+    date: str
+    total_tokens_in: int
+    total_tokens_out: int
+    total_cost_usd: float
+    daily_budget_usd: float
+    request_count: int
+    is_budget_exceeded: bool
+

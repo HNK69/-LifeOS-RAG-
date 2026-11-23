@@ -379,3 +379,110 @@ LifeOS provides multi-profile workspace boundaries and storage-level row-level a
 ### Request Resolution (`X-Workspace-ID`)
 - Requests resolve target workspace via header `X-Workspace-ID` or query parameter `?workspace_id=`.
 - `get_request_context` validates workspace existence and verifies user membership; unauthorized access is immediately rejected with HTTP 403 Forbidden.
+
+---
+
+## 11. Hybrid Local-Cloud Routing & Privacy Gatekeeper (Milestone 7)
+
+### Architecture Overview
+LifeOS Milestone 7 implements an intelligent, privacy-preserving LLM routing architecture that balances local privacy, deterministic security, and cloud reasoning capacity.
+
+```
++-------------------------------------------------------------------------------+
+|                             Caller / LLM Request                              |
+|                          (generate_response / API)                            |
++-------------------------------------------------------------------------------+
+                                        |
+                                        v
++-------------------------------------------------------------------------------+
+|                            5-Step Pre-Egress Gating                           |
+|                                                                               |
+|  1. Workspace Check     --> Is workspace local_only?   ---[Yes]---> Local LLM |
+|  2. Consent Check       --> Has cloud_reasoning consent? -[No]----> Local LLM |
+|  3. Budget Check        --> Daily budget exceeded?     ---[Yes]---> Local LLM |
+|  4. Privacy Gatekeeper  --> Critical secrets detected? ---[Yes]---> Local LLM |
+|                             Moderate/High PII detected?---[Yes]---> Scrub PII |
+|                                                                     (Vault)   |
+|  5. Cloud Dispatch      --> Send scrubbed prompt to cloud                     |
+|                             Cascade on timeout/error   -----------> Local LLM |
++-------------------------------------------------------------------------------+
+                                        |
+                 +----------------------+----------------------+
+                 |                                             |
+                 v                                             v
++----------------------------------+         +----------------------------------+
+|           Cloud LLM              |         |         Local Provider           |
+| (OpenRouter / CloudOpenAIProvider|         | (LocalOllamaProvider / Fallback) |
++----------------------------------+         +----------------------------------+
+                 |                                             |
+                 v                                             v
+      Scrubbed Cloud Response                       Local Offline Response
+                 |                                             |
+                 v                                             |
++----------------------------------+                           |
+|    Surrogate Re-Identification   |                           |
+|      (Restores placeholders)     |                           |
++----------------------------------+                           |
+                 |                                             |
+                 +----------------------+----------------------+
+                                        |
+                                        v
+                          Clean Final Text Response
+```
+
+### 5-Step Pre-Egress Gating Order
+Cloud network egress is strictly forbidden until the following five checks evaluate in exact sequence:
+1. **Workspace Boundary Enforcement**:
+   - Queries originating from workspaces with `local_only=True`, `profile_type="confidential"`, or `profile_type="local_only"` are routed directly to `LocalProvider`. Zero cloud network calls are made.
+2. **Granular Consent Verification**:
+   - Checks whether active consent exists for purpose `"cloud_reasoning"` and resource `"cloud_llm"` / `"ai_inference"`.
+   - In accordance with Milestone 4 consent principles, if no active consent grant is present or if consent was revoked, the request immediately flips to local execution.
+3. **Daily Cloud Budget Enforcement**:
+   - Compares cumulative daily expenditure against `LIFEOS_DAILY_CLOUD_BUDGET_USD` ($1.00 by default).
+   - If the budget cap has been met or exceeded, the router automatically flips to local execution without interrupting user workflow.
+4. **Deterministic Privacy Gatekeeper & Surrogate Vaulting**:
+   - The gatekeeper inspects text for PII entities across 7 distinct categories:
+     - `CREDENTIALS`: API keys (`sk-`, `ghp_`, `xoxb-`), private keys (PEM/SSH), bearer tokens $\rightarrow$ **CRITICAL** sensitivity. Hard-blocks cloud egress and forces local execution.
+     - `FINANCIAL`: Payment card numbers validated with the Luhn checksum algorithm $\rightarrow$ **HIGH** sensitivity.
+     - `GOV_ID`: US Social Security Numbers (SSN) $\rightarrow$ **HIGH** sensitivity.
+     - `EMAIL`: Email addresses $\rightarrow$ **MODERATE** sensitivity.
+     - `PHONE`: North American and international E.164 phone numbers $\rightarrow$ **MODERATE** sensitivity.
+     - `IP_ADDRESS`: IPv4 and IPv6 network addresses $\rightarrow$ **MODERATE** sensitivity.
+     - `SENSITIVE_NAME`: Configured private terms/code names $\rightarrow$ **MODERATE** sensitivity.
+   - When moderate/high PII is detected and `LIFEOS_PII_REDACTION_ENABLED=True`, the request-scoped `SurrogateVault` replaces sensitive strings with placeholders (e.g. `<EMAIL_1>`, `<PHONE_1>`).
+5. **Cloud Dispatch with Graceful Fallback Cascade**:
+   - The cloud provider sends exclusively scrubbed text containing placeholders.
+   - If the cloud provider encounters network drops, rate limits (429), gateway timeouts (504), or service downtime, the router catches the exception and immediately cascades to the local fallback provider.
+
+### SurrogateVault Lifecycle & Leak Prevention Guarantees
+- **Request-Scoped & Ephemeral**: Vault instances are initialized per generation request and strictly cleared in a `finally` block or context manager (`with SurrogateVault() as vault:`).
+- **Zero Disk / Database Persistence**: Surrogate mappings are maintained exclusively in volatile memory; they are never written to disk, database, or cache.
+- **Masked Representations**: `__repr__` and `__str__` outputs explicitly mask dictionary contents (`<SurrogateVault vault_id='...' entries=N>`) preventing inadvertent leakage into log streams.
+- **Reversible Re-identification**: Once the cloud provider generates a response, the vault maps surrogate placeholders back to original values before returning the string to the caller.
+
+### Provider Architecture
+- `CloudOpenAIProvider`: Wraps OpenRouter / OpenAI client. Dynamically accesses `app.llm.generator.client` to preserve 100% backward compatibility with test monkeypatches.
+- `LocalOllamaProvider`: Connects to local endpoint (`LIFEOS_LOCAL_LLM_URL`, default `http://localhost:11434/v1`). If the Ollama daemon is unreachable, automatically cascades to `DeterministicFallbackProvider`.
+- `DeterministicFallbackProvider`: Offline, zero-dependency extractive/heuristic generator that guarantees structured, deterministic output even on isolated air-gapped systems.
+- `MockLLMProvider`: Fully deterministic provider recording all calls and prompts for testing and verification.
+
+### Daily Budget Tracking & Cryptographic Audit Logging
+- **Persistent Ledger (`data/routing_budget.json`)**: Tracks daily input tokens, output tokens, estimated spend (USD), and request count with automatic midnight UTC rollover.
+- **Cryptographic Audit Event (`cloud_llm_egress`)**: Emits audit logs with token counts and estimated costs. Details strictly contain numeric values and model identifiers; ZERO raw prompt or PII data is written to audit logs.
+
+### Routing REST API Endpoints (`/api/routing`)
+- `GET /api/routing/policy`: Retrieve current routing mode, local model URL, budget limits, and redaction flags (requires authentication).
+- `PUT /api/routing/policy`: Update routing mode (`local_only`, `local_first`, `cloud_with_gatekeeper`, `hybrid_cascade`), daily budget USD, and redaction flags (requires administrative authorization).
+- `POST /api/routing/gatekeeper/inspect`: Dry-run PII inspection endpoint returning detected entity spans, sensitivity level, scrubbed preview, and egress eligibility.
+- `GET /api/routing/metrics`: Retrieve real-time daily token counts, expenditure, and budget saturation state.
+
+### Configuration Variables
+| Variable | Default | Allowed Values | Description |
+| :--- | :--- | :--- | :--- |
+| `LIFEOS_ROUTING_MODE` | `hybrid_cascade` | `local_only`, `local_first`, `cloud_with_gatekeeper`, `hybrid_cascade` | System-wide LLM routing strategy |
+| `LIFEOS_LOCAL_LLM_URL` | `http://localhost:11434/v1` | URL | Base URL for local Ollama/OpenAI-compatible inference server |
+| `LIFEOS_LOCAL_LLM_MODEL` | `llama3.2:1b` | String | Model identifier for local LLM inference |
+| `LIFEOS_DAILY_CLOUD_BUDGET_USD` | `1.0` | Float $\ge 0.01$ | Daily cloud expenditure limit in USD |
+| `LIFEOS_PII_REDACTION_ENABLED` | `true` | Boolean | Whether gatekeeper scrubs PII before cloud dispatch |
+| `LIFEOS_ROUTING_BUDGET_FILE` | `data/routing_budget.json` | Path | Persistent ledger for daily cloud usage accumulators |
+

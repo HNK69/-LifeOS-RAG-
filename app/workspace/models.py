@@ -27,6 +27,16 @@ class WorkspaceProfile:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+    @property
+    def is_local_only(self) -> bool:
+        """Returns True if workspace settings or profile type mandates strict local processing."""
+        return bool(
+            self.settings.get("local_only", False)
+            or self.settings.get("is_local_only", False)
+            or self.profile_type in ("confidential", "local_only")
+        )
+
+
 
 @dataclass
 class WorkspaceMembership:
@@ -38,3 +48,4 @@ class WorkspaceMembership:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
