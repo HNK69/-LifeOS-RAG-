@@ -46,7 +46,7 @@ from app.api.middleware import (
     RequestSizeLimiterMiddleware,
     SecurityHeadersMiddleware,
 )
-from app.api.routes import admin, context, documents, health, metrics, people, query
+from app.api.routes import admin, connectors, context, device, documents, events, health, metrics, people, privacy, query, workspaces
 
 
 @asynccontextmanager
@@ -75,9 +75,64 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
 
+    # Optional background queue worker
+    try:
+        import config
+        queue_worker_enabled = getattr(config, "QUEUE_WORKER_ENABLED", False)
+    except ImportError:
+        from app import config
+        queue_worker_enabled = getattr(config, "QUEUE_WORKER_ENABLED", False)
+
+    if queue_worker_enabled:
+        try:
+            from app.ingestion.queue import start_queue_worker
+            start_queue_worker()
+        except Exception:
+            pass
+
+    # Device identity & cryptographic envelope initialization
+    try:
+        from app.security.device_identity import get_device_identity
+        from app.security.device_store import initialize_identity_store, sync_local_identity
+        initialize_identity_store()
+        dev_id = get_device_identity()
+        sync_local_identity(dev_id)
+    except Exception:
+        pass
+
+    # Privacy store initialization
+    try:
+        from app.security.privacy_store import initialize_privacy_store
+        initialize_privacy_store()
+    except Exception:
+        pass
+
+    # Workspace store initialization
+    try:
+        from app.workspace.store import init_workspace_store
+        init_workspace_store()
+    except Exception:
+        pass
+
+    # Event bus initialization
+    try:
+        import asyncio
+        from app.events.bus import get_event_bus
+        bus = get_event_bus()
+        bus.set_loop(asyncio.get_running_loop())
+    except Exception:
+        pass
+
     yield
 
     # 2. Graceful Shutdown
+    # Stop background queue worker if running
+    try:
+        from app.ingestion.queue import stop_queue_worker
+        stop_queue_worker(timeout=5.0)
+    except Exception:
+        pass
+
     # Stop background watcher if running
     try:
         from app.knowledge.watcher import stop_background_watcher
@@ -144,6 +199,12 @@ def create_app() -> FastAPI:
     app.include_router(context.router)
     app.include_router(people.router)
     app.include_router(admin.router)
+    app.include_router(connectors.router)
+    app.include_router(device.router, prefix="/api/device", tags=["device"])
+    app.include_router(privacy.router, prefix="/api/privacy", tags=["privacy"])
+    app.include_router(workspaces.router)
+    app.include_router(events.router, prefix="/api/events", tags=["events"])
+    app.add_api_websocket_route("/ws/events", events.websocket_event_endpoint)
 
     return app
 

@@ -102,6 +102,17 @@ REGISTRY_DB = _get_env_path("LIFEOS_REGISTRY_DB", BASE_DIR / "document_registry.
 ENTITY_DB = _get_env_path("LIFEOS_ENTITY_DB", DATA_DIR / "entities.db")
 PEOPLE_DB = _get_env_path("LIFEOS_PEOPLE_DB", DATA_DIR / "people_registry.db")
 CONTEXT_DB = _get_env_path("LIFEOS_CONTEXT_DB", DATA_DIR / "context.db")
+QUEUE_DB = _get_env_path("LIFEOS_QUEUE_DB", DATA_DIR / "queue.db")
+IDENTITY_DB = _get_env_path("LIFEOS_IDENTITY_DB", DATA_DIR / "identity.db")
+PRIVACY_DB = _get_env_path("LIFEOS_PRIVACY_DB", DATA_DIR / "privacy.db")
+WORKSPACE_DB = _get_env_path("LIFEOS_WORKSPACE_DB", DATA_DIR / "workspace.db")
+DEFAULT_WORKSPACE_ID = _get_env_str("LIFEOS_DEFAULT_WORKSPACE_ID", "default")
+DEVICE_KEYS_PATH = _get_env_path("LIFEOS_DEVICE_KEYS_PATH", DATA_DIR / "device_keys.json")
+DEVICE_NAME = os.getenv("LIFEOS_DEVICE_NAME", "")
+DEVICE_TYPE = _get_env_str("LIFEOS_DEVICE_TYPE", "desktop", {"desktop", "mobile", "server", "tablet", "embedded"})
+
+# Authorized root directories for external connectors (prevents arbitrary filesystem scanning)
+AUTHORIZED_CONNECTOR_ROOTS = _get_env_list("LIFEOS_AUTHORIZED_CONNECTOR_ROOTS", [str(DOCUMENTS_DIR)])
 
 
 # ============================================================
@@ -223,6 +234,13 @@ EMBEDDING_MODEL = _get_env_str(
     "LIFEOS_EMBEDDING_MODEL",
     "BAAI/bge-m3",
 )
+
+# ============================================================
+# SPEECH-TO-TEXT (AUDIO)
+# ============================================================
+
+WHISPER_MODEL = _get_env_str("LIFEOS_WHISPER_MODEL", "openai/whisper-tiny")
+WHISPER_DEVICE = _get_env_str("LIFEOS_WHISPER_DEVICE", "cpu")
 
 
 # ============================================================
@@ -396,6 +414,8 @@ API_ENVIRONMENT = _get_env_str(
 BACKUP_DIR = _get_env_path("LIFEOS_BACKUP_DIR", DATA_DIR / "backups")
 LOG_FORMAT = _get_env_str("LIFEOS_LOG_FORMAT", "text", allowed={"text", "json"})
 WATCHER_ENABLED = _get_env_bool("LIFEOS_WATCHER_ENABLED", False)
+QUEUE_WORKER_ENABLED = _get_env_bool("LIFEOS_QUEUE_WORKER_ENABLED", False)
+QUEUE_POLL_INTERVAL = _get_env_float("LIFEOS_QUEUE_POLL_INTERVAL", 0.5, min_val=0.01)
 METRICS_ENABLED = _get_env_bool("LIFEOS_METRICS_ENABLED", True)
 
 

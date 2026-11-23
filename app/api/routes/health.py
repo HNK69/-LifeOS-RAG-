@@ -13,9 +13,9 @@ from fastapi.responses import JSONResponse
 from app.api.schemas import HealthResponse, ReadinessResponse
 
 try:
-    from config import DATA_DIR, DOCUMENTS_DIR, CHROMA_DIR, REGISTRY_DB
+    from config import DATA_DIR, DOCUMENTS_DIR, CHROMA_DIR, REGISTRY_DB, QUEUE_DB
 except ImportError:
-    from app.config import DATA_DIR, DOCUMENTS_DIR, CHROMA_DIR, REGISTRY_DB
+    from app.config import DATA_DIR, DOCUMENTS_DIR, CHROMA_DIR, REGISTRY_DB, QUEUE_DB
 
 router = APIRouter(tags=["System"])
 
@@ -89,6 +89,29 @@ async def readiness_check():
         checks["chroma_directory"] = chroma_path.is_dir()
     except Exception:
         checks["chroma_directory"] = False
+
+    # 5. Check Queue DB accessibility
+    try:
+        from app.storage.sqlite import connect_sqlite
+        from app.ingestion.queue import init_queue_db
+        try:
+            import config
+            q_path = Path(getattr(config, "QUEUE_DB", QUEUE_DB))
+        except ImportError:
+            q_path = Path(QUEUE_DB)
+        init_queue_db(q_path)
+        with connect_sqlite(q_path, timeout=1.0) as conn:
+            conn.execute("SELECT 1")
+        checks["queue_storage"] = True
+    except Exception:
+        checks["queue_storage"] = False
+
+    # 6. Check Queue worker health (only reports unready if initialized worker died abnormally)
+    try:
+        from app.ingestion.queue import is_worker_healthy
+        checks["queue_worker"] = is_worker_healthy()
+    except Exception:
+        checks["queue_worker"] = True
 
     all_ok = all(checks.values())
     overall_status = "ready" if all_ok else "unready"

@@ -71,7 +71,45 @@ from knowledge.document_registry import (
 
 
 
+import inspect
+import logging
+
 logger = logging.getLogger(__name__)
+
+
+def _call_store_embeddings(chunks, embeddings, path, workspace_id="default"):
+    sig = inspect.signature(store_embeddings)
+    params = sig.parameters
+    has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+    if "workspace_id" in params or has_varkw:
+        return store_embeddings(chunks, embeddings, path, workspace_id=workspace_id)
+    return store_embeddings(chunks, embeddings, path)
+
+
+def _call_register_media(file_path, file_hash, metadata, chunk_count=None, workspace_id="default", owner_id="default_user"):
+    sig = inspect.signature(register_media)
+    params = sig.parameters
+    has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+    kwargs = {}
+    if chunk_count is not None and ("chunk_count" in params or has_varkw):
+        kwargs["chunk_count"] = chunk_count
+    if "workspace_id" in params or has_varkw:
+        kwargs["workspace_id"] = workspace_id
+    if "owner_id" in params or has_varkw:
+        kwargs["owner_id"] = owner_id
+    return register_media(file_path, file_hash, metadata, **kwargs)
+
+
+def _call_mark_success(file_path, file_hash, chunk_count=0, metadata=None, workspace_id="default", owner_id="default_user"):
+    sig = inspect.signature(mark_success)
+    params = sig.parameters
+    has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+    kwargs = {}
+    if "workspace_id" in params or has_varkw:
+        kwargs["workspace_id"] = workspace_id
+    if "owner_id" in params or has_varkw:
+        kwargs["owner_id"] = owner_id
+    return mark_success(file_path, file_hash, chunk_count=chunk_count, metadata=metadata, **kwargs)
 
 
 def _discover_files(documents_dir):
@@ -135,42 +173,75 @@ def _remove_deleted_files(current_files):
             )
 
 
-def _process_structured_file(file_path, file_hash):
+def _process_structured_file(file_path, file_hash, workspace_id="default", owner_id="default_user"):
     """Process a structured file."""
 
     logger.info(
-        "Processing structured file: %s",
+        "Processing structured file: %s (workspace=%s)",
         file_path.name,
+        workspace_id,
     )
 
     mark_processing(
         file_path,
         file_hash,
+        workspace_id=workspace_id,
+        owner_id=owner_id,
     )
 
     metadata = handle_structured_file(
         file_path
     )
 
-    mark_success(
+    if metadata.get("status") == "error":
+        raise ValueError(metadata.get("error", f"Malformed structured file: {file_path.name}"))
+
+    # Extract plain-text tabular content, chunk, and embed into vector index
+    chunk_count = 0
+    try:
+        text = read_documents(str(file_path))
+        if text:
+            cleaned_text = clean_text(text)
+            chunks = chunk_text(cleaned_text)
+            if chunks:
+                embeddings = generate_embeddings(chunks)
+                _call_store_embeddings(
+                    chunks,
+                    embeddings,
+                    str(file_path),
+                    workspace_id=workspace_id,
+                )
+                chunk_count = len(chunks)
+    except Exception as exc:
+        logger.debug(
+            f"Tabular text chunking/embedding skipped for {file_path.name}: {exc}"
+        )
+
+    _call_mark_success(
         file_path,
         file_hash,
-        chunk_count=0,
+        chunk_count=chunk_count,
         metadata=metadata,
+        workspace_id=workspace_id,
+        owner_id=owner_id,
     )
 
     logger.info(
-        "Structured file indexed: %s",
+        "Structured file indexed: %s (chunks=%d, workspace=%s)",
         file_path.name,
+        chunk_count,
+        workspace_id,
     )
 
 
-def _process_text_document(file_path, file_hash):
+def _process_text_document(file_path, file_hash, workspace_id="default", owner_id="default_user"):
     """Process a normal text/document file."""
 
     mark_processing(
         file_path,
         file_hash,
+        workspace_id=workspace_id,
+        owner_id=owner_id,
     )
 
     text = read_documents(
@@ -194,10 +265,11 @@ def _process_text_document(file_path, file_hash):
         chunks
     )
 
-    store_embeddings(
+    _call_store_embeddings(
         chunks,
         embeddings,
         str(file_path),
+        workspace_id=workspace_id,
     )
 
     metadata = None
@@ -216,21 +288,24 @@ def _process_text_document(file_path, file_hash):
             exc,
         )
 
-    mark_success(
+    _call_mark_success(
         file_path,
         file_hash,
         chunk_count=len(chunks),
         metadata=metadata,
+        workspace_id=workspace_id,
+        owner_id=owner_id,
     )
 
     logger.info(
-        "Successfully ingested %s (%d chunks)",
+        "Successfully ingested %s (%d chunks, workspace=%s)",
         file_path.name,
         len(chunks),
+        workspace_id,
     )
 
 
-def ingest_file(file_path, force=False):
+def ingest_file(file_path, force=False, workspace_id="default", owner_id="default_user"):
     """
     Incrementally ingest ONE file.
 
@@ -311,6 +386,7 @@ def ingest_file(file_path, force=False):
             if not force and is_unchanged(file_path, file_hash):
                 return False
 
+            chunk_count = 0
             if media_metadata["media_type"] == "image":
                 # Clean any previous face embeddings for this image before re-detecting
                 try:
@@ -336,10 +412,56 @@ def ingest_file(file_path, force=False):
                     visual_metadata=media_metadata["visual_metadata"],
                 )
 
-            register_media(
+            elif media_metadata["media_type"] == "audio":
+                try:
+                    from app.knowledge.audio_transcriber import transcribe_audio
+                except ImportError:
+                    try:
+                        from knowledge.audio_transcriber import transcribe_audio
+                    except ImportError:
+                        transcribe_audio = None
+
+                if transcribe_audio is not None:
+                    transcription = transcribe_audio(file_path)
+                    transcript_text = transcription.get("text", "").strip()
+                    media_metadata["transcript"] = transcript_text
+                    media_metadata["duration"] = transcription.get("duration", 0.0)
+                    media_metadata["language"] = transcription.get("language", "en")
+
+                    if transcript_text:
+                        cleaned_transcript = clean_text(transcript_text)
+                        audio_chunks = chunk_text(cleaned_transcript)
+                        if audio_chunks:
+                            audio_embeddings = generate_embeddings(audio_chunks)
+                            _call_store_embeddings(
+                                audio_chunks,
+                                audio_embeddings,
+                                str(file_path),
+                                workspace_id=workspace_id,
+                            )
+                            chunk_count = len(audio_chunks)
+
+                        try:
+                            from knowledge.analyzer import analyze_document
+                            analyze_document(
+                                file_path,
+                                text=cleaned_transcript,
+                                extract_graph=True,
+                            )
+                        except Exception as exc:
+                            logger.warning(
+                                "Audio transcript entity analysis failed for %s: %s",
+                                file_path.name,
+                                exc,
+                            )
+
+            _call_register_media(
                 file_path,
                 file_hash,
                 media_metadata,
+                chunk_count=chunk_count if chunk_count > 0 else None,
+                workspace_id=workspace_id,
+                owner_id=owner_id,
             )
 
             logger.info(
@@ -410,6 +532,8 @@ def ingest_file(file_path, force=False):
             _process_structured_file(
                 path,
                 file_hash,
+                workspace_id=workspace_id,
+                owner_id=owner_id,
             )
 
             return True
@@ -423,6 +547,8 @@ def ingest_file(file_path, force=False):
             _process_text_document(
                 path,
                 file_hash,
+                workspace_id=workspace_id,
+                owner_id=owner_id,
             )
 
             return True

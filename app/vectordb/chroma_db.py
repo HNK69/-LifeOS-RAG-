@@ -109,9 +109,9 @@ def _chunk_ids(file_path, chunk_count):
     ]
 
 
-def store_embeddings(chunks, embeddings, file_path):
+def store_embeddings(chunks, embeddings, file_path, workspace_id="default"):
     """
-    Store a document's chunks and embeddings in ChromaDB.
+    Store a document's chunks and embeddings in ChromaDB, tagged with workspace_id.
 
     New chunks are inserted before old chunks are deleted.
 
@@ -142,6 +142,7 @@ def store_embeddings(chunks, embeddings, file_path):
 
                 "document_type": "",
                 "category": "",
+                "workspace_id": workspace_id,
             }
         )
 

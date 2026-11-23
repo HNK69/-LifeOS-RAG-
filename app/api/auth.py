@@ -97,3 +97,33 @@ def authenticate_request(
         detail="Invalid API key or credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+def verify_token(token: str | None, user_id: str | None = None, tenant_id: str | None = None) -> AuthenticatedUser | None:
+    """
+    Verify raw token string against configured keys.
+    Returns AuthenticatedUser on success, or None on failure.
+    """
+    try:
+        import config
+    except ImportError:
+        from app import config
+
+    auth_enabled = getattr(config, "API_AUTH_ENABLED", True)
+    if not auth_enabled:
+        return AuthenticatedUser(user_id=user_id or "dev_user", tenant_id=tenant_id or "default_tenant", role="admin")
+
+    if not token:
+        return None
+
+    cfg_admin_key = getattr(config, "API_ADMIN_KEY", "")
+    cfg_api_key = getattr(config, "API_KEY", "")
+
+    if cfg_admin_key and secrets.compare_digest(token, cfg_admin_key):
+        return AuthenticatedUser(user_id=user_id or "admin", tenant_id=tenant_id or "default_tenant", role="admin")
+
+    if cfg_api_key and secrets.compare_digest(token, cfg_api_key):
+        role = "admin" if not cfg_admin_key else "user"
+        return AuthenticatedUser(user_id=user_id or "user", tenant_id=tenant_id or "default_tenant", role=role)
+
+    return None

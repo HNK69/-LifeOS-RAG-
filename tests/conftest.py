@@ -41,6 +41,7 @@ def isolate_test_environment(tmp_path, monkeypatch):
     test_ent_db = test_data_dir / "entities.db"
     test_peo_db = test_data_dir / "people_registry.db"
     test_ctx_db = test_data_dir / "context.db"
+    test_ws_db = test_data_dir / "workspace.db"
 
     test_docs_dir.mkdir(parents=True, exist_ok=True)
     test_chroma_dir.mkdir(parents=True, exist_ok=True)
@@ -54,6 +55,7 @@ def isolate_test_environment(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "ENTITY_DB", test_ent_db)
     monkeypatch.setattr(config, "PEOPLE_DB", test_peo_db)
     monkeypatch.setattr(config, "CONTEXT_DB", test_ctx_db)
+    monkeypatch.setattr(config, "WORKSPACE_DB", test_ws_db)
 
     # Also redirect in all loaded modules that may have bound them
     for mod_name in ["ingestion.ingest", "app.ingestion.ingest"]:
@@ -76,6 +78,11 @@ def isolate_test_environment(tmp_path, monkeypatch):
         if mod_name in sys.modules:
             monkeypatch.setattr(sys.modules[mod_name], "CONTEXT_DB", test_ctx_db)
 
+    for mod_name in ["workspace.store", "app.workspace.store", "app.api.dependencies"]:
+        if mod_name in sys.modules:
+            if hasattr(sys.modules[mod_name], "WORKSPACE_DB"):
+                monkeypatch.setattr(sys.modules[mod_name], "WORKSPACE_DB", test_ws_db)
+
     # 3. Initialize fresh schemas in the isolated databases
     try:
         from knowledge.document_registry import initialize_registry
@@ -86,6 +93,12 @@ def isolate_test_environment(tmp_path, monkeypatch):
     try:
         from knowledge.entity_relationship import initialize_entity_store
         initialize_entity_store()
+    except Exception:
+        pass
+
+    try:
+        from app.workspace.store import init_workspace_store
+        init_workspace_store(test_ws_db)
     except Exception:
         pass
 

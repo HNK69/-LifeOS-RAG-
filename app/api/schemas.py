@@ -32,6 +32,11 @@ class QueryRequest(BaseModel):
         max_length=128,
         description="Optional client-specified user identifier",
     )
+    workspace_id: str | None = Field(
+        None,
+        max_length=128,
+        description="Optional target workspace ID (defaults to resolved request workspace or 'default')",
+    )
 
     @field_validator("query")
     @classmethod
@@ -72,6 +77,27 @@ class DocumentUploadResponse(BaseModel):
     status: str
     message: str
     chunks: int | None = None
+    job_id: str | None = None
+
+
+class IngestionJobResponse(BaseModel):
+    job_id: str
+    file_path: str
+    status: str
+    priority: int = 0
+    attempts: int = 0
+    max_attempts: int = 3
+    error_message: str | None = None
+    created_at: str
+    updated_at: str
+    next_run_at: str | None = None
+
+
+class IngestionJobCreateResponse(BaseModel):
+    job_id: str
+    status: str
+    filename: str
+    message: str
 
 
 class DocumentDeleteResponse(BaseModel):
@@ -200,3 +226,219 @@ class ErrorDetail(BaseModel):
 
 class ErrorResponse(BaseModel):
     error: ErrorDetail
+
+
+# ============================================================
+# DEVICE IDENTITY & CRYPTOGRAPHIC ENVELOPE SCHEMAS
+# ============================================================
+
+class DeviceIdentityResponse(BaseModel):
+    device_id: str
+    device_name: str
+    device_type: str
+    os_info: str
+    signing_public_key: str
+    exchange_public_key: str
+    created_at: str
+    last_seen_at: str
+
+
+class PeerDeviceResponse(BaseModel):
+    device_id: str
+    device_name: str
+    device_type: str
+    signing_public_key: str
+    exchange_public_key: str
+    trust_status: str
+    paired_at: str
+    last_seen_at: str | None = None
+    metadata: dict[str, Any] = {}
+
+
+class PairingInitiateRequest(BaseModel):
+    peer_device_id: str
+    ttl_seconds: int = 300
+
+
+class PairingInitiateResponse(BaseModel):
+    challenge_id: str
+    peer_device_id: str
+    challenge_code: str
+    expires_at: str
+    created_at: str
+
+
+class PairingVerifyRequest(BaseModel):
+    challenge_id: str
+    challenge_code: str
+    peer_device_id: str
+    peer_device_name: str
+    peer_device_type: str
+    peer_signing_public_key: str
+    peer_exchange_public_key: str
+    signature: str
+
+
+class PairingVerifyResponse(BaseModel):
+    success: bool
+    message: str
+    device_id: str
+
+
+class SealEnvelopeRequest(BaseModel):
+    recipient_device_id: str
+    payload: str
+
+
+class CryptographicEnvelopeSchema(BaseModel):
+    version: int
+    sender_device_id: str
+    recipient_device_id: str
+    algorithm: str
+    ephemeral_public_key: str
+    iv: str
+    ciphertext: str
+    auth_tag: str
+    signature: str
+    timestamp: str
+
+
+class OpenEnvelopeRequest(BaseModel):
+    envelope: CryptographicEnvelopeSchema
+
+
+class OpenEnvelopeResponse(BaseModel):
+    success: bool
+    payload: str
+    sender_device_id: str
+
+
+# ============================================================
+# PRIVACY DASHBOARD, CONSENT & AUDIT SCHEMAS
+# ============================================================
+
+class ConsentGrantRequest(BaseModel):
+    resource_path: str
+    scope_type: str = "folder"
+    categories: list[str] = ["document", "spreadsheet", "audio", "image", "structured_data"]
+    purposes: list[str] = ["indexing", "retrieval", "reasoning", "local_embeddings"]
+    allow_cloud_sync: bool = False
+    expires_at: str | None = None
+
+
+class ConsentGrantResponse(BaseModel):
+    consent_id: str
+    scope_type: str
+    resource_path: str
+    categories: list[str]
+    purposes: list[str]
+    allow_cloud_sync: bool
+    granted_at: str
+    expires_at: str | None = None
+    status: str
+    revoked_at: str | None = None
+    revocation_reason: str | None = None
+
+
+class ConsentRevokeRequest(BaseModel):
+    reason: str | None = "User requested revocation"
+
+
+class AuditLogEntryResponse(BaseModel):
+    event_id: str
+    timestamp: str
+    event_type: str
+    actor: str
+    resource: str
+    purpose: str
+    status: str
+    prev_hash: str
+    record_hash: str
+    details: dict[str, Any] = {}
+
+
+class AuditVerifyResponse(BaseModel):
+    valid: bool
+    verified_records: int
+    error: str | None = None
+
+
+class PrivacySummaryResponse(BaseModel):
+    device_id: str
+    device_name: str
+    local_first_mode: bool = True
+    cloud_sync_enabled: bool = False
+    telemetry_enabled: bool = False
+    active_consented_sources: int
+    total_consent_grants: int
+    total_audit_events: int
+    audit_chain_valid: bool
+    total_indexed_documents: int
+
+
+class PrivacyExportResponse(BaseModel):
+    exported_at: str
+    device_id: str
+    consents: list[dict[str, Any]]
+    documents: list[dict[str, Any]]
+    context_memories: list[dict[str, Any]]
+    people: list[dict[str, Any]]
+    audit_log: list[dict[str, Any]]
+
+
+class PrivacyForgetRequest(BaseModel):
+    target_type: str  # 'path', 'person', 'all'
+    target_value: str | None = None
+    confirm_permanent_purge: bool = False
+
+
+class PrivacyForgetResponse(BaseModel):
+    success: bool
+    purged_documents_count: int
+    purged_context_count: int
+    purged_people_count: int
+    message: str
+
+
+# ============================================================
+# WORKSPACE SCHEMAS (Milestone 6)
+# ============================================================
+
+class WorkspaceCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=128)
+    profile_type: str = Field("personal", max_length=64)
+    description: str | None = Field(None, max_length=512)
+    settings: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkspaceUpdateRequest(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=128)
+    profile_type: str | None = Field(None, max_length=64)
+    description: str | None = Field(None, max_length=512)
+    is_active: bool | None = None
+    settings: dict[str, Any] | None = None
+
+
+class WorkspaceResponse(BaseModel):
+    workspace_id: str
+    name: str
+    profile_type: str
+    description: str | None = None
+    created_at: str
+    updated_at: str
+    is_active: bool
+    settings: dict[str, Any] = {}
+    document_count: int = 0
+    context_count: int = 0
+
+
+class WorkspaceMemberAddRequest(BaseModel):
+    user_id: str = Field(..., min_length=1, max_length=128)
+    role: str = Field("member", pattern="^(owner|admin|member|viewer)$")
+
+
+class WorkspaceMemberResponse(BaseModel):
+    workspace_id: str
+    user_id: str
+    role: str
+    joined_at: str

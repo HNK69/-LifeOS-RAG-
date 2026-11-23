@@ -109,6 +109,51 @@ def _inspect_json(path):
     }
 
 
+def _inspect_excel(path):
+    """
+    Inspect an Excel file (.xlsx, .xls) and extract sheet and structural metadata
+    without loading all contents into memory at once.
+    """
+    check_file_size(path)
+    import openpyxl
+
+    try:
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    except Exception as exc:
+        return {
+            "format": "xlsx",
+            "status": "error",
+            "error": f"Invalid or corrupt Excel workbook: {exc}",
+            "sheets": [],
+            "sheet_count": 0,
+            "total_rows": 0,
+        }
+
+    sheets_info = []
+    total_rows = 0
+
+    try:
+        for name in wb.sheetnames:
+            ws = wb[name]
+            row_count = ws.max_row or 0
+            col_count = ws.max_column or 0
+            total_rows += row_count
+            sheets_info.append({
+                "name": name,
+                "row_count": row_count,
+                "column_count": col_count,
+            })
+    finally:
+        wb.close()
+
+    return {
+        "format": "xlsx",
+        "sheets": sheets_info,
+        "sheet_count": len(sheets_info),
+        "total_rows": total_rows,
+    }
+
+
 def handle_structured_file(file_path):
     """
     Inspect a structured-data file and return useful metadata.
@@ -147,6 +192,12 @@ def handle_structured_file(file_path):
             _inspect_json(path)
         )
 
+    elif extension in (".xlsx", ".xls"):
+
+        result.update(
+            _inspect_excel(path)
+        )
+
     else:
 
         result["format"] = "unsupported_structured_format"
@@ -154,6 +205,7 @@ def handle_structured_file(file_path):
 
         return result
 
-    result["status"] = "inspected"
+    if "status" not in result:
+        result["status"] = "inspected"
 
     return result

@@ -67,12 +67,15 @@ def initialize_registry():
                 "ALTER TABLE documents "
                 "ADD COLUMN modified_time_ns INTEGER DEFAULT 0"
             ),
+            "workspace_id": "ALTER TABLE documents ADD COLUMN workspace_id TEXT DEFAULT 'default'",
+            "owner_id": "ALTER TABLE documents ADD COLUMN owner_id TEXT DEFAULT 'default_user'",
         }
 
         for column_name, statement in migrations.items():
             if column_name not in columns:
                 connection.execute(statement)
 
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_documents_workspace ON documents(workspace_id)")
         connection.commit()
 
 
@@ -160,19 +163,30 @@ def get_document(file_path):
     return dict(row) if row is not None else None
 
 
-def get_all_documents():
-    """Return all registered documents."""
+def get_all_documents(workspace_id=None):
+    """Return all registered documents, optionally scoped by workspace_id."""
 
     initialize_registry()
 
     with _get_connection() as connection:
-        rows = connection.execute(
-            """
-            SELECT *
-            FROM documents
-            ORDER BY filename
-            """
-        ).fetchall()
+        if workspace_id:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM documents
+                WHERE workspace_id = ?
+                ORDER BY filename
+                """,
+                (workspace_id,),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM documents
+                ORDER BY filename
+                """
+            ).fetchall()
 
     return [dict(row) for row in rows]
 
@@ -233,7 +247,7 @@ def is_unchanged(file_path, file_hash=None):
     return not file_needs_processing(file_path)
 
 
-def mark_processing(file_path, file_hash):
+def mark_processing(file_path, file_hash, workspace_id="default", owner_id="default_user"):
     """Mark a file as currently being processed."""
 
     path = Path(file_path).resolve()
@@ -254,9 +268,11 @@ def mark_processing(file_path, file_hash):
                 error_message,
                 metadata_json,
                 file_size,
-                modified_time_ns
+                modified_time_ns,
+                workspace_id,
+                owner_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 
             ON CONFLICT(path) DO UPDATE SET
                 filename = excluded.filename,
@@ -266,7 +282,9 @@ def mark_processing(file_path, file_hash):
                 ingestion_status = excluded.ingestion_status,
                 error_message = NULL,
                 file_size = excluded.file_size,
-                modified_time_ns = excluded.modified_time_ns
+                modified_time_ns = excluded.modified_time_ns,
+                workspace_id = COALESCE(excluded.workspace_id, documents.workspace_id, 'default'),
+                owner_id = COALESCE(excluded.owner_id, documents.owner_id, 'default_user')
             """,
             (
                 signature["path"],
@@ -281,6 +299,8 @@ def mark_processing(file_path, file_hash):
                 None,
                 signature["file_size"],
                 signature["modified_time_ns"],
+                workspace_id,
+                owner_id,
             ),
         )
 
@@ -292,6 +312,8 @@ def mark_success(
     file_hash,
     chunk_count=0,
     metadata=None,
+    workspace_id="default",
+    owner_id="default_user",
 ):
     """Mark a document as successfully processed."""
 
@@ -326,9 +348,11 @@ def mark_success(
                 error_message,
                 metadata_json,
                 file_size,
-                modified_time_ns
+                modified_time_ns,
+                workspace_id,
+                owner_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 
             ON CONFLICT(path) DO UPDATE SET
                 filename = excluded.filename,
@@ -341,7 +365,9 @@ def mark_success(
                 error_message = NULL,
                 metadata_json = excluded.metadata_json,
                 file_size = excluded.file_size,
-                modified_time_ns = excluded.modified_time_ns
+                modified_time_ns = excluded.modified_time_ns,
+                workspace_id = COALESCE(excluded.workspace_id, documents.workspace_id, 'default'),
+                owner_id = COALESCE(excluded.owner_id, documents.owner_id, 'default_user')
             """,
             (
                 signature["path"],
@@ -356,6 +382,8 @@ def mark_success(
                 metadata_json,
                 signature["file_size"],
                 signature["modified_time_ns"],
+                workspace_id,
+                owner_id,
             ),
         )
 
@@ -366,6 +394,8 @@ def mark_failed(
     file_path,
     file_hash,
     error_message,
+    workspace_id="default",
+    owner_id="default_user",
 ):
     """Record a failed ingestion attempt."""
 
@@ -387,9 +417,11 @@ def mark_failed(
                 error_message,
                 metadata_json,
                 file_size,
-                modified_time_ns
+                modified_time_ns,
+                workspace_id,
+                owner_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 
             ON CONFLICT(path) DO UPDATE SET
                 filename = excluded.filename,
@@ -399,7 +431,9 @@ def mark_failed(
                 ingestion_status = excluded.ingestion_status,
                 error_message = excluded.error_message,
                 file_size = excluded.file_size,
-                modified_time_ns = excluded.modified_time_ns
+                modified_time_ns = excluded.modified_time_ns,
+                workspace_id = COALESCE(excluded.workspace_id, documents.workspace_id, 'default'),
+                owner_id = COALESCE(excluded.owner_id, documents.owner_id, 'default_user')
             """,
             (
                 signature["path"],
@@ -414,6 +448,8 @@ def mark_failed(
                 None,
                 signature["file_size"],
                 signature["modified_time_ns"],
+                workspace_id,
+                owner_id,
             ),
         )
 
@@ -458,41 +494,67 @@ def mark_removal_failed(file_path, error_message):
         connection.commit()
 
 
-def get_documents_by_status(status):
-    """Return all documents with the requested ingestion status."""
+def get_documents_by_status(status, workspace_id=None):
+    """Return all documents with the requested ingestion status, optionally scoped by workspace_id."""
 
     initialize_registry()
 
     with _get_connection() as connection:
-        rows = connection.execute(
-            """
-            SELECT *
-            FROM documents
-            WHERE ingestion_status = ?
-            ORDER BY filename
-            """,
-            (status,),
-        ).fetchall()
+        if workspace_id:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM documents
+                WHERE ingestion_status = ?
+                  AND workspace_id = ?
+                ORDER BY filename
+                """,
+                (status, workspace_id),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM documents
+                WHERE ingestion_status = ?
+                ORDER BY filename
+                """,
+                (status,),
+            ).fetchall()
 
     return [dict(row) for row in rows]
 
 
-def get_document_summary():
-    """Return counts grouped by ingestion status."""
+def get_document_summary(workspace_id=None):
+    """Return counts grouped by ingestion status, optionally scoped by workspace_id."""
 
     initialize_registry()
 
     with _get_connection() as connection:
-        rows = connection.execute(
-            """
-            SELECT
-                ingestion_status,
-                COUNT(*) AS count
-            FROM documents
-            GROUP BY ingestion_status
-            ORDER BY ingestion_status
-            """
-        ).fetchall()
+        if workspace_id:
+            rows = connection.execute(
+                """
+                SELECT
+                    ingestion_status,
+                    COUNT(*) AS count
+                FROM documents
+                WHERE workspace_id = ?
+                GROUP BY ingestion_status
+                ORDER BY ingestion_status
+                """,
+                (workspace_id,),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                """
+                SELECT
+                    ingestion_status,
+                    COUNT(*) AS count
+                FROM documents
+                GROUP BY ingestion_status
+                ORDER BY ingestion_status
+                """
+            ).fetchall()
 
     return {
         row["ingestion_status"]: row["count"]
@@ -500,9 +562,9 @@ def get_document_summary():
     }
 
 
-def search_documents(search_term):
+def search_documents(search_term, workspace_id=None):
     """
-    Search registered filenames and paths.
+    Search registered filenames and paths, optionally scoped by workspace_id.
 
     This is file-level discovery, not semantic retrieval.
     """
@@ -512,21 +574,33 @@ def search_documents(search_term):
     pattern = f"%{search_term}%"
 
     with _get_connection() as connection:
-        rows = connection.execute(
-            """
-            SELECT *
-            FROM documents
-            WHERE filename LIKE ?
-               OR path LIKE ?
-            ORDER BY filename
-            """,
-            (pattern, pattern),
-        ).fetchall()
+        if workspace_id:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM documents
+                WHERE (filename LIKE ? OR path LIKE ?)
+                  AND workspace_id = ?
+                ORDER BY filename
+                """,
+                (pattern, pattern, workspace_id),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM documents
+                WHERE filename LIKE ?
+                   OR path LIKE ?
+                ORDER BY filename
+                """,
+                (pattern, pattern),
+            ).fetchall()
 
     return [dict(row) for row in rows]
 
-def register_media(file_path, file_hash, media_metadata):
-    """Register a media file with lightweight metadata."""
+def register_media(file_path, file_hash, media_metadata, chunk_count=0, workspace_id="default", owner_id="default_user"):
+    """Register a media file with lightweight metadata and optional transcript chunk count."""
 
     path = Path(file_path).resolve()
     signature = get_file_signature(path)
@@ -551,9 +625,11 @@ def register_media(file_path, file_hash, media_metadata):
                 error_message,
                 metadata_json,
                 file_size,
-                modified_time_ns
+                modified_time_ns,
+                workspace_id,
+                owner_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 
             ON CONFLICT(path) DO UPDATE SET
                 filename = excluded.filename,
@@ -561,11 +637,14 @@ def register_media(file_path, file_hash, media_metadata):
                 modified_time = excluded.modified_time,
                 file_hash = excluded.file_hash,
                 ingestion_status = excluded.ingestion_status,
+                chunk_count = excluded.chunk_count,
                 last_ingested_at = excluded.last_ingested_at,
                 error_message = NULL,
                 metadata_json = excluded.metadata_json,
                 file_size = excluded.file_size,
-                modified_time_ns = excluded.modified_time_ns
+                modified_time_ns = excluded.modified_time_ns,
+                workspace_id = COALESCE(excluded.workspace_id, documents.workspace_id, 'default'),
+                owner_id = COALESCE(excluded.owner_id, documents.owner_id, 'default_user')
             """,
             (
                 signature["path"],
@@ -574,12 +653,14 @@ def register_media(file_path, file_hash, media_metadata):
                 signature["modified_time"],
                 file_hash,
                 "success",
-                0,
+                chunk_count,
                 datetime.now(timezone.utc).isoformat(),
                 None,
                 metadata_json,
                 signature["file_size"],
                 signature["modified_time_ns"],
+                workspace_id,
+                owner_id,
             ),
         )
 

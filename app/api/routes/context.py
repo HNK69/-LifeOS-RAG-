@@ -7,7 +7,11 @@ Wraps existing app.context.context_store operations.
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.dependencies import require_auth
+from app.api.dependencies import (
+    RequestContext,
+    get_request_context,
+    require_auth,
+)
 from app.api.schemas import (
     ContextDeleteResponse,
     ContextListResponse,
@@ -28,8 +32,11 @@ router = APIRouter(prefix="/api/context", tags=["Context"])
     summary="List Personal Context",
     description="Returns all active personal context items currently stored.",
 )
-async def list_context(_user=Depends(require_auth)):
-    items = get_all_context()
+async def list_context(
+    ctx: RequestContext = Depends(get_request_context),
+    _user=Depends(require_auth),
+):
+    items = get_all_context(workspace_id=ctx.workspace_id)
     return ContextListResponse(context=items, count=len(items))
 
 
@@ -40,6 +47,7 @@ async def list_context(_user=Depends(require_auth)):
 )
 async def create_or_update_context(
     body: ContextSetRequest,
+    ctx: RequestContext = Depends(get_request_context),
     _user=Depends(require_auth),
 ):
     try:
@@ -49,6 +57,7 @@ async def create_or_update_context(
             context_type=body.context_type,
             valid_from=body.valid_from,
             valid_until=body.valid_until,
+            workspace_id=ctx.workspace_id,
         )
         return {
             "status": "success",
@@ -70,9 +79,10 @@ async def create_or_update_context(
 )
 async def remove_context_item(
     key: str,
+    ctx: RequestContext = Depends(get_request_context),
     _user=Depends(require_auth),
 ):
-    deleted = delete_context(key)
+    deleted = delete_context(key, workspace_id=ctx.workspace_id)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

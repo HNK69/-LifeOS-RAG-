@@ -7,7 +7,7 @@ session and request isolation.
 """
 
 from typing import Any
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app import main
 from app.api.dependencies import (
@@ -64,6 +64,17 @@ async def process_query(
         active_session = get_or_create_session(ctx.user, active_session_id)
     else:
         active_session = ctx.session_data
+
+    # Resolve workspace authorization and propagate to session
+    active_workspace_id = body.workspace_id or ctx.workspace_id
+    if body.workspace_id and body.workspace_id != ctx.workspace_id:
+        from app.workspace.store import is_user_authorized_for_workspace
+        if not is_user_authorized_for_workspace(ctx.user, body.workspace_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"User '{ctx.user}' is not authorized to access workspace '{body.workspace_id}'",
+            )
+    active_session["workspace_id"] = active_workspace_id
 
     # Pass isolated session dictionary to existing core handler
     answer = main.handle_query(

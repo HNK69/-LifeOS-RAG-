@@ -85,6 +85,18 @@ def read_json(file_path):
     return json.dumps(data, indent=2)
 
 
+def read_excel(file_path):
+    path = Path(file_path)
+    check_file_size(path)
+    excel_file = pd.ExcelFile(path)
+    sheets_text = []
+    for sheet_name in excel_file.sheet_names:
+        df = pd.read_excel(excel_file, sheet_name=sheet_name)
+        sheet_repr = f"Sheet: {sheet_name}\n{df.to_string(index=False)}"
+        sheets_text.append(sheet_repr)
+    return "\n\n".join(sheets_text)
+
+
 def read_documents(file_path):
     path = validate_document_path(file_path, must_exist=True)
     check_file_size(path)
@@ -101,6 +113,8 @@ def read_documents(file_path):
         return read_csv(path)
     elif extension == '.json':
         return read_json(path)
+    elif extension in ('.xlsx', '.xls'):
+        return read_excel(path)
     
     raise ValueError(f"Unsupported file type: {extension}")
 

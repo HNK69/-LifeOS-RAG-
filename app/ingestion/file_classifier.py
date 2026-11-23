@@ -39,6 +39,8 @@ TEXT_DOCUMENT_EXTENSIONS = {
 STRUCTURED_EXTENSIONS = {
     ".csv",
     ".json",
+    ".xlsx",
+    ".xls",
 }
 
 

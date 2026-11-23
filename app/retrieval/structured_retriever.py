@@ -31,7 +31,7 @@ def retrieve_structured_files(query=None):
         if document["ingestion_status"] != "success":
             continue
 
-        if document["extension"] not in {".csv", ".json"}:
+        if document["extension"] not in {".csv", ".json", ".xlsx", ".xls"}:
             continue
 
         metadata = document.get("metadata_json")
