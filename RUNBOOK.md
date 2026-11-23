@@ -486,3 +486,83 @@ Cloud network egress is strictly forbidden until the following five checks evalu
 | `LIFEOS_PII_REDACTION_ENABLED` | `true` | Boolean | Whether gatekeeper scrubs PII before cloud dispatch |
 | `LIFEOS_ROUTING_BUDGET_FILE` | `data/routing_budget.json` | Path | Persistent ledger for daily cloud usage accumulators |
 
+---
+
+## 12. Cross-Device Synchronization & Conflict Resolution (Milestone 8)
+
+### Architecture Overview
+LifeOS Milestone 8 introduces peer-to-peer and offline-first cross-device synchronization with end-to-end encryption (E2EE), vector clock causality tracking, and non-destructive conflict resolution.
+
+```
++-------------------------------------------------------------------------------+
+|                                Local Device A                                 |
+|               (Context Store, Workspace Profiles, Documents)                  |
++-------------------------------------------------------------------------------+
+                                        │
+                                        ▼
++-------------------------------------------------------------------------------+
+|                                 Sync Engine                                   |
+|  1. Peer Trust Check     ──► Is peer paired in identity.db?  ──[No]─► Abort   |
+|  2. Workspace Isolation  ──► Filter out local_only/confidential workspaces    |
+|  3. Change Packaging     ──► Vector clocks, Lamport counters, tombstones      |
+|  4. Asymmetric Sealing   ──► X25519-HKDF-AES256GCM + Ed25519 signature        |
++-------------------------------------------------------------------------------+
+                                        │
+                                        ▼
+                         Cryptographic Envelope (E2EE)
+                          (Zero Relay / Network Leak)
+                                        │
+                                        ▼
++-------------------------------------------------------------------------------+
+|                                Trusted Device B                               |
+|  1. Open & Verify        ──► Verify Ed25519 signature & decrypt AEAD payload  |
+|  2. Causality Check      ──► Compare vector clocks (ANCESTOR / DESCENDANT)    |
+|  3. Conflict Handling    ──► Concurrent? Route to ConflictResolver            |
+|                              - Context: Deterministic LWW + conflict log      |
+|                              - Documents: Non-destructive conflict forking    |
+|  4. Store Convergence    ──► Apply updates & deletion tombstones              |
++-------------------------------------------------------------------------------+
+```
+
+### Core Security & Privacy Guarantees
+1. **Peer Trust Store Gating**:
+   - Synchronization is strictly restricted to devices registered in `trusted_devices` (`data/identity.db`) with status `'paired'`.
+   - Unknown devices or peers with status `'revoked'` are immediately rejected at the cryptographic boundary.
+2. **Cryptographic Envelope Protection (E2EE)**:
+   - All synchronization packages are wrapped inside `CryptographicEnvelope` using ephemeral X25519 key exchange, HKDF-SHA256 key derivation (`LifeOS-Envelope-v1`), AES-256-GCM AEAD encryption, and sender Ed25519 digital signatures.
+   - Intermediate relays or local transport layers possess zero ability to decrypt or tamper with sync batches.
+3. **Workspace Air-Gap Enforcement**:
+   - Workspaces marked with `is_local_only=True` or `profile_type in ('confidential', 'local_only')` are strictly excluded from sync package generation.
+   - Incoming sync payloads attempting to mutate a local-only workspace are safely skipped.
+4. **Offline Deletion Tombstones**:
+   - Offline deletions record explicit deletion tombstones (`is_tombstone=1`, `SyncChangeType.DELETE`) in `sync_change_log` (`data/sync.db`), ensuring deleted entities propagate rather than being resurrected.
+5. **Vector Clocks & Causality Ordering**:
+   - Every change records a vector clock `dict[device_id, counter]` and Lamport sequence counter.
+   - Causality comparisons identify:
+     - `ANCESTOR`: Incoming change is strictly newer $\rightarrow$ applied immediately.
+     - `DESCENDANT`: Incoming change is strictly older $\rightarrow$ discarded as stale.
+     - `EQUAL`: Identical causal state $\rightarrow$ no-op.
+     - `CONCURRENT`: Divergent concurrent edits $\rightarrow$ routed to deterministic conflict resolution.
+
+### Non-Destructive Conflict Resolution
+- **Context Items (LWW with Tie-Breaker)**:
+  - Divergent context updates resolve via Last-Write-Wins (LWW) using ISO timestamps, breaking ties with deterministic lexicographical device IDs.
+  - The losing state is preserved in `sync_conflicts` (`data/sync.db`), enabling user inspection and rollback.
+- **Documents (Branching / Forking)**:
+  - If content hashes differ for the same relative document path, the incoming remote version is preserved non-destructively as `{filename}.conflict-{peer_device_id[:6]}-{timestamp}.{ext}`.
+  - Both files remain accessible to the user; zero content is overwritten.
+
+### Sync REST API Endpoints (`/api/sync`)
+- `GET /api/sync/peers`: List paired peers, last synchronization timestamps, and unresolved conflict counts.
+- `POST /api/sync/export`: Assemble and seal an encrypted synchronization envelope for a trusted peer.
+- `POST /api/sync/import`: Decrypt, verify, and apply an incoming encrypted sync envelope.
+- `GET /api/sync/conflicts`: Query detected synchronization conflicts with status filtering.
+- `POST /api/sync/conflicts/{conflict_id}/resolve`: Manually resolve a conflict with an explicit payload.
+
+### Configuration Variables
+| Variable | Default | Allowed Values | Description |
+| :--- | :--- | :--- | :--- |
+| `LIFEOS_SYNC_DB` | `data/sync.db` | Path | Persistent SQLite store for sync ledgers, vector clocks, and conflicts |
+| `LIFEOS_SYNC_TOMBSTONE_TTL_DAYS` | `30` | Integer $\ge 1$ | Retention threshold before pruning deletion tombstones |
+| `LIFEOS_SYNC_AUTO_RESOLVE_CONFLICTS` | `true` | Boolean | Whether to apply automatic deterministic conflict resolution |
+

@@ -436,6 +436,15 @@ ROUTING_BUDGET_FILE = _get_env_path("LIFEOS_ROUTING_BUDGET_FILE", DATA_DIR / "ro
 
 
 # ============================================================
+# CROSS-DEVICE SYNC & CONFLICT RESOLUTION (MILESTONE 8)
+# ============================================================
+
+SYNC_DB = _get_env_path("LIFEOS_SYNC_DB", DATA_DIR / "sync.db")
+SYNC_TOMBSTONE_TTL_DAYS = _get_env_int("LIFEOS_SYNC_TOMBSTONE_TTL_DAYS", 30, min_val=1)
+SYNC_AUTO_RESOLVE_CONFLICTS = _get_env_bool("LIFEOS_SYNC_AUTO_RESOLVE_CONFLICTS", True)
+
+
+# ============================================================
 # VALIDATION
 # ============================================================
 

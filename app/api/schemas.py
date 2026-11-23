@@ -491,3 +491,64 @@ class RoutingMetricsResponse(BaseModel):
     request_count: int
     is_budget_exceeded: bool
 
+
+# ============================================================
+# CROSS-DEVICE SYNC & CONFLICT SCHEMAS (Milestone 8)
+# ============================================================
+
+class SyncExportRequest(BaseModel):
+    peer_device_id: str = Field(..., min_length=1)
+    workspace_id: str | None = None
+
+
+class SyncExportResponse(BaseModel):
+    envelope: CryptographicEnvelopeSchema
+    batch_id: str
+    items_count: int
+    manifest: dict[str, int]
+
+
+class SyncImportRequest(BaseModel):
+    envelope: CryptographicEnvelopeSchema
+
+
+class SyncImportResponse(BaseModel):
+    session_id: str
+    peer_device_id: str
+    items_imported: int
+    items_skipped: int
+    conflicts_detected: int
+    conflicts_resolved: int
+    success: bool
+    timestamp: str
+
+
+class SyncConflictResponse(BaseModel):
+    conflict_id: str
+    entity_type: str
+    entity_id: str
+    workspace_id: str
+    peer_device_id: str
+    local_data: dict[str, Any]
+    remote_data: dict[str, Any]
+    local_clock: dict[str, int]
+    remote_clock: dict[str, int]
+    status: str
+    resolution_strategy: str
+    resolved_value: dict[str, Any] | None = None
+    created_at: str
+    resolved_at: str | None = None
+
+
+class SyncConflictResolveRequest(BaseModel):
+    resolved_value: dict[str, Any]
+
+
+class PeerSyncStatusResponse(BaseModel):
+    peer_device_id: str
+    device_name: str
+    device_type: str
+    trust_status: str
+    last_synced_at: str | None = None
+    unresolved_conflicts: int = 0
+
