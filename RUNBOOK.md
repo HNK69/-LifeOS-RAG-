@@ -640,3 +640,95 @@ LifeOS Milestone 9 introduces an isolated sidecar execution sandbox for untruste
 | `LIFEOS_PLUGIN_RESTART_WINDOW_SECONDS` | `60` | Integer $[5, 3600]$ | Sliding window threshold for tracking crash frequency |
 | `LIFEOS_PLUGIN_AUTO_START` | `false` | Boolean | Whether to auto-start all registered plugins at application launch |
 
+---
+
+## 14. Production Hardening, Packaging & Release (Milestone 10)
+
+### Architecture Overview
+LifeOS Milestone 10 establishes production-grade packaging, standardized CLI operations, pre-flight diagnostics, comprehensive disaster recovery, secret log masking, and graceful process lifecycle management.
+
+```
++-------------------------------------------------------------------------------+
+│                          LifeOS Unified Production CLI                        │
+│                                (app/cli.py)                                   │
+│   ┌──────────────────┐   ┌──────────────────────┐   ┌─────────────────────┐   │
+│   │   lifeos serve   │   │     lifeos doctor    │   │lifeos backup/restore│   │
+│   └────────┬─────────┘   └──────────┬───────────┘   └─────────┬───────────┘   │
++────────────┼────────────────────────┼─────────────────────────┼───────────────+
+             ▼                        ▼                         ▼
++-------------------------+ +-------------------------+ +-----------------------+
+│ FastASGI Server         │ │ Pre-Flight Diagnostics  │ │ Disaster Recovery     │
+│ - Single-process        │ │ - 8 SQLite DB checks:   │ │ - All 8 SQLite DBs    │
+│ - Secret-masked logging │ │   PRAGMA integrity_check│ │ - Documents & Vectors │
+│ - /ready & /live probes │ │   foreign_key_check     │ │ - Plugins manifests   │
+│ - Sidecar shutdown      │ │ - Device keypair check  │ │ - SHA-256 verification│
+│ - WAL truncation        │ │ - Storage permissions   │ │ - Retention pruning   │
++-------------------------+ +-------------------------+ +-----------------------+
+```
+
+### 1. Pre-Flight Diagnostics (`lifeos doctor`)
+The diagnostic engine inspects all subsystems prior to production deployment:
+- **8 SQLite Databases**:
+  1. `document_registry.db`: Registry metadata and file hashes.
+  2. `entities.db`: Extracted entities and relationships.
+  3. `people_registry.db`: Face vectors and dynamic identity.
+  4. `context.db`: Episodic context and key-value memories.
+  5. `privacy.db`: Consent grants and SHA-256 hash-chained audit records.
+  6. `identity.db`: Device identity keypairs and paired peers.
+  7. `workspace.db`: Workspace boundaries and memberships.
+  8. `sync.db`: Vector clocks, Lamport counters, and conflict logs.
+  - Executes `PRAGMA integrity_check`, `PRAGMA foreign_key_check`, and verifies WAL mode.
+- **Filesystem Permissions**: Validates write permissions for `data/`, `data/documents/`, `data/backups/`, and `data/plugins/`.
+- **Security & Cryptography**: Confirms local device Ed25519/X25519 keypair presence.
+- **Vector Database**: Connects to ChromaDB and lists collections without running embedding models.
+- **Network Ports**: Validates API port bindability.
+
+### 2. Comprehensive Disaster Recovery & Backup
+- **Backup Generation (`lifeos backup create [--label TAG]`)**:
+  - Atomically backs up all 8 SQLite databases using the online SQLite backup API.
+  - Backs up the documents directory, ChromaDB persistent vectors, and plugin manifests.
+  - Writes a `manifest.json` containing SHA-256 checksums and file sizes for every database.
+  - Compresses into a portable `lifeos_backup_*.tar.gz` archive.
+- **Disaster Recovery Restore (`lifeos backup restore <ARCHIVE>`)**:
+  - Extracts to a staging directory and recalculates SHA-256 checksums against `manifest.json`.
+  - Runs `PRAGMA integrity_check` on every extracted database before overwriting active state.
+  - Creates an automatic pre-restore safety snapshot to prevent catastrophic data loss.
+- **Retention Pruning (`lifeos backup prune [--days N]`)**:
+  - Automatically deletes backup archives older than `LIFEOS_BACKUP_RETENTION_DAYS` (default 30 days).
+
+### 3. Secret-Masked Observability
+- All text and JSON log formatters incorporate `SecretMaskingFilter`.
+- Automatically redacts API keys (`sk-...`, `api_key=...`), bearer tokens (`Bearer ...`), passwords, and session tokens to `[REDACTED]`.
+
+### 4. CLI Quick Reference
+```bash
+# Start production API server
+lifeos serve --host 0.0.0.0 --port 8000
+
+# Run pre-flight system diagnostics
+lifeos doctor
+lifeos doctor --strict --json
+
+# Create point-in-time disaster recovery snapshot
+lifeos backup create --label pre_upgrade
+
+# List existing backups
+lifeos backup list
+
+# Restore from backup archive
+lifeos backup restore data/backups/lifeos_backup_20261124_170000.tar.gz
+
+# Prune archives older than 30 days
+lifeos backup prune --days 30
+
+# Inspect system status and active databases
+lifeos status
+```
+
+### Configuration Variables
+| Variable | Default | Allowed Values | Description |
+| :--- | :--- | :--- | :--- |
+| `LIFEOS_BACKUP_RETENTION_DAYS` | `30` | Integer $\ge 1$ | Retention threshold (days) for automated backup archive pruning |
+| `LIFEOS_LOG_MASK_SECRETS` | `true` | Boolean | Whether logging filters scrub sensitive tokens and credentials |
+| `LIFEOS_DOCTOR_STRICT_MODE` | `false` | Boolean | Whether pre-flight diagnostics fail on warnings as well as errors |
+

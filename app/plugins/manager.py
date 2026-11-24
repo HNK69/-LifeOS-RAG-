@@ -421,6 +421,15 @@ class PluginManager:
         sidecar.stop()
         return True
 
+    def stop_all(self) -> None:
+        """Gracefully stop all registered plugin sidecars (used during shutdown)."""
+        with self._lock:
+            for sidecar in self._sidecars.values():
+                try:
+                    sidecar.stop()
+                except Exception as exc:
+                    logger.warning(f"Error stopping sidecar {sidecar.plugin_id}: {exc}")
+
     def restart_plugin(self, plugin_id: str) -> bool:
         """Restart a plugin sidecar with exponential backoff on repeated restarts."""
         sidecar = self._get_sidecar(plugin_id)

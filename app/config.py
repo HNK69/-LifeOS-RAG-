@@ -457,6 +457,15 @@ PLUGIN_AUTO_START = _get_env_bool("LIFEOS_PLUGIN_AUTO_START", False)
 
 
 # ============================================================
+# PRODUCTION HARDENING, PACKAGING & RELEASE (MILESTONE 10)
+# ============================================================
+
+BACKUP_RETENTION_DAYS = _get_env_int("LIFEOS_BACKUP_RETENTION_DAYS", 30, min_val=1)
+LOG_MASK_SECRETS = _get_env_bool("LIFEOS_LOG_MASK_SECRETS", True)
+DOCTOR_STRICT_MODE = _get_env_bool("LIFEOS_DOCTOR_STRICT_MODE", False)
+
+
+# ============================================================
 # VALIDATION
 # ============================================================
 

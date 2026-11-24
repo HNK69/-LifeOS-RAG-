@@ -13,9 +13,29 @@ from fastapi.responses import JSONResponse
 from app.api.schemas import HealthResponse, ReadinessResponse
 
 try:
-    from config import DATA_DIR, DOCUMENTS_DIR, CHROMA_DIR, REGISTRY_DB, QUEUE_DB
+    from config import (
+        DATA_DIR,
+        DOCUMENTS_DIR,
+        CHROMA_DIR,
+        REGISTRY_DB,
+        QUEUE_DB,
+        PRIVACY_DB,
+        IDENTITY_DB,
+        WORKSPACE_DB,
+        SYNC_DB,
+    )
 except ImportError:
-    from app.config import DATA_DIR, DOCUMENTS_DIR, CHROMA_DIR, REGISTRY_DB, QUEUE_DB
+    from app.config import (
+        DATA_DIR,
+        DOCUMENTS_DIR,
+        CHROMA_DIR,
+        REGISTRY_DB,
+        QUEUE_DB,
+        PRIVACY_DB,
+        IDENTITY_DB,
+        WORKSPACE_DB,
+        SYNC_DB,
+    )
 
 router = APIRouter(tags=["System"])
 
@@ -81,6 +101,26 @@ async def readiness_check():
         checks["sqlite_storage"] = True
     except Exception:
         checks["sqlite_storage"] = False
+
+    # 3b. Check Milestone databases (privacy, identity, workspace, sync)
+    try:
+        from app.storage.sqlite import connect_sqlite
+        m_databases = {
+            "privacy_storage": PRIVACY_DB,
+            "identity_storage": IDENTITY_DB,
+            "workspace_storage": WORKSPACE_DB,
+            "sync_storage": SYNC_DB,
+        }
+        for check_name, db_path in m_databases.items():
+            p = Path(db_path)
+            if p.exists():
+                with connect_sqlite(p, timeout=1.0) as conn:
+                    conn.execute("SELECT 1")
+                checks[check_name] = True
+            else:
+                checks[check_name] = True
+    except Exception:
+        checks["milestone_storage"] = False
 
     # 4. Check Chroma storage directory accessibility
     try:

@@ -498,6 +498,32 @@ Administrative operations (e.g. `POST /api/admin/reindex`, `DELETE /api/document
 
 ---
 
+## Production CLI & Operations
+
+LifeOS includes a unified command-line tool `lifeos`:
+
+```powershell
+# Run system diagnostics across all 8 SQLite databases, vectors, and security keys
+python -m app.cli doctor
+
+# Start production API server
+python -m app.cli serve --host 0.0.0.0 --port 8000
+
+# Create complete atomic disaster-recovery backup
+python -m app.cli backup create --label pre_upgrade
+
+# List available backup snapshots
+python -m app.cli backup list
+
+# Restore from a backup archive with SHA-256 verification
+python -m app.cli backup restore data/backups/lifeos_backup_20261124_170000.tar.gz
+
+# Inspect system status
+python -m app.cli status
+```
+
+---
+
 ## Testing
 
 Run the complete test suite:

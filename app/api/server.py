@@ -147,6 +147,31 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+    # Stop all plugin sidecars cleanly
+    try:
+        from app.plugins.manager import get_plugin_manager
+        get_plugin_manager().stop_all()
+    except Exception:
+        pass
+
+    # Checkpoint and flush SQLite databases
+    try:
+        from app.storage.sqlite import connect_sqlite
+        try:
+            import config as cfg
+        except ImportError:
+            from app import config as cfg
+        for db_attr in ("REGISTRY_DB", "CONTEXT_DB", "PRIVACY_DB", "IDENTITY_DB", "WORKSPACE_DB", "SYNC_DB"):
+            p = getattr(cfg, db_attr, None)
+            if p and Path(p).exists():
+                try:
+                    with connect_sqlite(Path(p), timeout=2.0) as conn:
+                        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
 
 def create_app() -> FastAPI:
     """Application factory for the LifeOS Phase 11 / Phase 12 API."""

@@ -1,13 +1,24 @@
 """
 backup.py
 
-Operational backup and disaster recovery procedures for LifeOS Phase 12.
-Provides coordinated, consistent point-in-time snapshots of:
-1. SQLite databases (via online SQLite backup API, capturing committed state without WAL drift)
+Operational backup, disaster recovery, and data verification procedures for LifeOS.
+Provides coordinated, consistent point-in-time snapshots and atomic restores of:
+1. All 8 SQLite databases (via online SQLite backup API, capturing committed state without WAL drift):
+   - document_registry.db (Milestone 1)
+   - entities.db (Milestone 1)
+   - people_registry.db (Milestone 1)
+   - context.db (Milestone 1)
+   - privacy.db (Milestone 4 - Consent & Cryptographic Audit)
+   - identity.db (Milestone 3 - Device Identity & Trusted Peers)
+   - workspace.db (Milestone 6 - Multi-Profile Boundaries & RLS)
+   - sync.db (Milestone 8 - Vector Clocks, Conflicts & Tombstones)
 2. Documents filesystem
 3. ChromaDB persistent index
-4. Metadata manifest with integrity checksums
+4. Plugins state and manifests (Milestone 9)
+5. Metadata manifest with SHA-256 integrity checksums
 """
+
+from __future__ import annotations
 
 import hashlib
 import json
@@ -25,24 +36,36 @@ from typing import Any
 try:
     from config import (
         BACKUP_DIR,
+        BACKUP_RETENTION_DAYS,
         CHROMA_DIR,
         CONTEXT_DB,
         DATA_DIR,
         DOCUMENTS_DIR,
         ENTITY_DB,
+        IDENTITY_DB,
         PEOPLE_DB,
+        PLUGINS_DIR,
+        PRIVACY_DB,
         REGISTRY_DB,
+        SYNC_DB,
+        WORKSPACE_DB,
     )
 except ImportError:
     from app.config import (
         BACKUP_DIR,
+        BACKUP_RETENTION_DAYS,
         CHROMA_DIR,
         CONTEXT_DB,
         DATA_DIR,
         DOCUMENTS_DIR,
         ENTITY_DB,
+        IDENTITY_DB,
         PEOPLE_DB,
+        PLUGINS_DIR,
+        PRIVACY_DB,
         REGISTRY_DB,
+        SYNC_DB,
+        WORKSPACE_DB,
     )
 
 logger = logging.getLogger("lifeos.storage.backup")
@@ -66,9 +89,8 @@ def _backup_sqlite_db(src_path: Path, dest_path: Path) -> dict[str, Any]:
     if not src_path.exists():
         return {"exists": False, "size_bytes": 0, "sha256": None}
 
-    # Connect to source and destination
-    src_conn = sqlite3.connect(str(src_path), timeout=5.0)
-    dest_conn = sqlite3.connect(str(dest_path), timeout=5.0)
+    src_conn = sqlite3.connect(str(src_path), timeout=10.0)
+    dest_conn = sqlite3.connect(str(dest_path), timeout=10.0)
     try:
         src_conn.backup(dest_conn)
     finally:
@@ -80,38 +102,42 @@ def _backup_sqlite_db(src_path: Path, dest_path: Path) -> dict[str, Any]:
     return {"exists": True, "size_bytes": size_bytes, "sha256": sha256}
 
 
+def _resolve_paths():
+    """Resolve active database, document, vector, and plugin paths."""
+    try:
+        import config as cfg
+    except ImportError:
+        import app.config as cfg
+
+    return {
+        "dest_dir": Path(getattr(cfg, "BACKUP_DIR", BACKUP_DIR)).resolve(),
+        "docs_src": Path(getattr(cfg, "DOCUMENTS_DIR", DOCUMENTS_DIR)).resolve(),
+        "chroma_src": Path(getattr(cfg, "CHROMA_DIR", CHROMA_DIR)).resolve(),
+        "plugins_src": Path(getattr(cfg, "PLUGINS_DIR", PLUGINS_DIR)).resolve(),
+        "data_dir": Path(getattr(cfg, "DATA_DIR", DATA_DIR)).resolve(),
+        "databases": {
+            "document_registry.db": Path(getattr(cfg, "REGISTRY_DB", REGISTRY_DB)),
+            "entities.db": Path(getattr(cfg, "ENTITY_DB", ENTITY_DB)),
+            "people_registry.db": Path(getattr(cfg, "PEOPLE_DB", PEOPLE_DB)),
+            "context.db": Path(getattr(cfg, "CONTEXT_DB", CONTEXT_DB)),
+            "privacy.db": Path(getattr(cfg, "PRIVACY_DB", PRIVACY_DB)),
+            "identity.db": Path(getattr(cfg, "IDENTITY_DB", IDENTITY_DB)),
+            "workspace.db": Path(getattr(cfg, "WORKSPACE_DB", WORKSPACE_DB)),
+            "sync.db": Path(getattr(cfg, "SYNC_DB", SYNC_DB)),
+        },
+    }
+
+
 def create_backup(
     destination_dir: Path | str | None = None,
     label: str | None = None,
 ) -> Path:
     """
     Create a complete, atomic point-in-time backup archive of LifeOS.
-
-    Args:
-        destination_dir: Directory where the backup .tar.gz will be saved.
-        label: Optional user tag for the backup file name.
-
-    Returns:
-        Absolute Path to the generated backup archive.
+    Captures all 8 SQLite databases, documents, vector database, and plugin state.
     """
-    try:
-        import config
-        dest_dir = Path(destination_dir or getattr(config, "BACKUP_DIR", BACKUP_DIR)).resolve()
-        docs_src = Path(getattr(config, "DOCUMENTS_DIR", DOCUMENTS_DIR)).resolve()
-        chroma_src = Path(getattr(config, "CHROMA_DIR", CHROMA_DIR)).resolve()
-        reg_db = Path(getattr(config, "REGISTRY_DB", REGISTRY_DB))
-        ent_db = Path(getattr(config, "ENTITY_DB", ENTITY_DB))
-        ppl_db = Path(getattr(config, "PEOPLE_DB", PEOPLE_DB))
-        ctx_db = Path(getattr(config, "CONTEXT_DB", CONTEXT_DB))
-    except ImportError:
-        dest_dir = Path(destination_dir or BACKUP_DIR).resolve()
-        docs_src = Path(DOCUMENTS_DIR).resolve()
-        chroma_src = Path(CHROMA_DIR).resolve()
-        reg_db = Path(REGISTRY_DB)
-        ent_db = Path(ENTITY_DB)
-        ppl_db = Path(PEOPLE_DB)
-        ctx_db = Path(CONTEXT_DB)
-
+    paths = _resolve_paths()
+    dest_dir = Path(destination_dir).resolve() if destination_dir else paths["dest_dir"]
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp_str = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -125,46 +151,49 @@ def create_backup(
         databases_dir = staging_dir / "databases"
         documents_stage = staging_dir / "documents"
         chroma_stage = staging_dir / "chroma_db"
+        plugins_stage = staging_dir / "plugins"
 
         databases_dir.mkdir(parents=True, exist_ok=True)
 
         manifest: dict[str, Any] = {
-            "version": "1.0.0",
+            "version": "2.0.0",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "databases": {},
             "documents_count": 0,
             "chroma_present": False,
+            "plugins_count": 0,
         }
 
-        # 1. Back up SQLite databases
-        db_targets = {
-            "document_registry.db": reg_db,
-            "entities.db": ent_db,
-            "people_registry.db": ppl_db,
-            "context.db": ctx_db,
-        }
-
-        for db_name, db_path in db_targets.items():
+        # 1. Back up all 8 SQLite databases
+        for db_name, db_path in paths["databases"].items():
             dest_file = databases_dir / db_name
             meta = _backup_sqlite_db(db_path, dest_file)
             manifest["databases"][db_name] = meta
 
         # 2. Back up documents directory
+        docs_src = paths["docs_src"]
         if docs_src.exists() and docs_src.is_dir():
             shutil.copytree(docs_src, documents_stage, dirs_exist_ok=True)
             manifest["documents_count"] = len([f for f in documents_stage.glob("*") if f.is_file()])
 
         # 3. Back up Chroma directory
+        chroma_src = paths["chroma_src"]
         if chroma_src.exists() and chroma_src.is_dir():
             shutil.copytree(chroma_src, chroma_stage, dirs_exist_ok=True)
             manifest["chroma_present"] = True
 
-        # 4. Write manifest
+        # 4. Back up Plugins directory
+        plugins_src = paths["plugins_src"]
+        if plugins_src.exists() and plugins_src.is_dir():
+            shutil.copytree(plugins_src, plugins_stage, dirs_exist_ok=True)
+            manifest["plugins_count"] = len([d for d in plugins_stage.iterdir() if d.is_dir()])
+
+        # 5. Write manifest
         manifest_path = staging_dir / "manifest.json"
         with open(manifest_path, "w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2)
 
-        # 5. Pack into tar.gz archive
+        # 6. Pack into tar.gz archive
         with tarfile.open(final_archive_path, "w:gz") as tar:
             for item in staging_dir.iterdir():
                 tar.add(item, arcname=item.name)
@@ -181,43 +210,27 @@ def restore_backup(
     target_data_dir: Path | str | None = None,
     target_chroma_dir: Path | str | None = None,
     target_documents_dir: Path | str | None = None,
+    create_safety_backup: bool = True,
 ) -> dict[str, Any]:
     """
-    Restore LifeOS databases, documents, and Chroma vectors from a backup archive.
-
-    Args:
-        archive_path: Path to the .tar.gz backup archive.
-        target_data_dir: Target data directory (defaults to config.DATA_DIR).
-        target_chroma_dir: Target Chroma directory (defaults to config.CHROMA_DIR).
-        target_documents_dir: Target documents directory (defaults to target_data_dir/documents).
-
-    Returns:
-        Structured summary of restored components and verification status.
+    Restore LifeOS databases, documents, Chroma vectors, and plugin states from a backup archive.
+    Enforces SHA-256 integrity verification across extracted items before overwriting.
     """
     archive = Path(archive_path).resolve()
     if not archive.exists() or not archive.is_file():
         raise FileNotFoundError(f"Backup archive not found: {archive}")
 
-    if target_data_dir:
-        target_data = Path(target_data_dir).resolve()
-        target_docs = Path(target_documents_dir or target_data / "documents").resolve()
+    paths = _resolve_paths()
+    target_data = Path(target_data_dir).resolve() if target_data_dir else paths["data_dir"]
+    if target_documents_dir:
+        target_docs = Path(target_documents_dir).resolve()
+    elif target_data_dir:
+        target_docs = (target_data / "documents").resolve()
     else:
-        try:
-            import config
-            target_data = Path(getattr(config, "DATA_DIR", DATA_DIR)).resolve()
-            target_docs = Path(target_documents_dir or getattr(config, "DOCUMENTS_DIR", target_data / "documents")).resolve()
-        except ImportError:
-            target_data = Path(DATA_DIR).resolve()
-            target_docs = Path(target_documents_dir or target_data / "documents").resolve()
+        target_docs = paths["docs_src"]
 
-    if target_chroma_dir:
-        target_chroma = Path(target_chroma_dir).resolve()
-    else:
-        try:
-            import config
-            target_chroma = Path(getattr(config, "CHROMA_DIR", CHROMA_DIR)).resolve()
-        except ImportError:
-            target_chroma = Path(CHROMA_DIR).resolve()
+    target_chroma = Path(target_chroma_dir).resolve() if target_chroma_dir else paths["chroma_src"]
+    target_plugins = target_data / "plugins"
 
     extract_dir = Path(tempfile.mkdtemp(prefix="lifeos_restore_stage_"))
 
@@ -233,17 +246,23 @@ def restore_backup(
         with open(manifest_path, "r", encoding="utf-8") as f:
             manifest = json.load(f)
 
-        target_data.mkdir(parents=True, exist_ok=True)
-        target_docs.mkdir(parents=True, exist_ok=True)
-        target_chroma.mkdir(parents=True, exist_ok=True)
+        databases_manifest = manifest.get("databases", {})
 
-        restored_dbs = []
-        # Restore databases
+        # Integrity verification: verify SHA-256 checksums of extracted databases
         databases_dir = extract_dir / "databases"
         if databases_dir.exists():
             for db_file in databases_dir.iterdir():
                 if db_file.is_file():
-                    # Integrity check on extracted database before overwriting
+                    expected_meta = databases_manifest.get(db_file.name)
+                    if expected_meta and expected_meta.get("sha256"):
+                        actual_hash = _compute_sha256(db_file)
+                        if actual_hash != expected_meta["sha256"]:
+                            raise ValueError(
+                                f"Corrupt archive: SHA-256 mismatch for {db_file.name} "
+                                f"(expected {expected_meta['sha256']}, got {actual_hash})"
+                            )
+
+                    # SQLite integrity check
                     test_conn = sqlite3.connect(str(db_file))
                     try:
                         cursor = test_conn.execute("PRAGMA integrity_check")
@@ -253,7 +272,23 @@ def restore_backup(
                     finally:
                         test_conn.close()
 
-                    # Atomic copy into destination
+        # Optional pre-restore safety backup of active state
+        if create_safety_backup and target_data.exists():
+            try:
+                safety_tag = "pre_restore_safety"
+                create_backup(label=safety_tag)
+            except Exception as exc:
+                logger.warning(f"Could not create pre-restore safety backup: {exc}")
+
+        target_data.mkdir(parents=True, exist_ok=True)
+        target_docs.mkdir(parents=True, exist_ok=True)
+        target_chroma.mkdir(parents=True, exist_ok=True)
+        target_plugins.mkdir(parents=True, exist_ok=True)
+
+        restored_dbs = []
+        if databases_dir.exists():
+            for db_file in databases_dir.iterdir():
+                if db_file.is_file():
                     dest = target_data / db_file.name
                     shutil.copy2(db_file, dest)
                     restored_dbs.append(db_file.name)
@@ -267,18 +302,26 @@ def restore_backup(
                     shutil.copy2(doc, target_docs / doc.name)
                     restored_docs_count += 1
 
-        # Restore Chroma
+        # Restore Chroma vectors
         chroma_stage = extract_dir / "chroma_db"
         chroma_restored = False
         if chroma_stage.exists() and chroma_stage.is_dir():
             shutil.copytree(chroma_stage, target_chroma, dirs_exist_ok=True)
             chroma_restored = True
 
+        # Restore Plugins
+        plugins_stage = extract_dir / "plugins"
+        plugins_restored = False
+        if plugins_stage.exists() and plugins_stage.is_dir():
+            shutil.copytree(plugins_stage, target_plugins, dirs_exist_ok=True)
+            plugins_restored = True
+
         logger.info(
-            "LifeOS restore complete: %d databases, %d documents, Chroma=%s",
+            "LifeOS restore complete: %d databases, %d documents, Chroma=%s, Plugins=%s",
             len(restored_dbs),
             restored_docs_count,
             chroma_restored,
+            plugins_restored,
         )
 
         return {
@@ -288,7 +331,52 @@ def restore_backup(
             "restored_databases": restored_dbs,
             "restored_documents": restored_docs_count,
             "chroma_restored": chroma_restored,
+            "plugins_restored": plugins_restored,
         }
 
     finally:
         shutil.rmtree(extract_dir, ignore_errors=True)
+
+
+def list_backups(destination_dir: Path | str | None = None) -> list[dict[str, Any]]:
+    """List available backups with file sizes, timestamps, and integrity status."""
+    paths = _resolve_paths()
+    dest_dir = Path(destination_dir).resolve() if destination_dir else paths["dest_dir"]
+    if not dest_dir.exists():
+        return []
+
+    backups = []
+    for archive in sorted(dest_dir.glob("lifeos_backup_*.tar.gz"), reverse=True):
+        stat = archive.stat()
+        backups.append({
+            "filename": archive.name,
+            "path": str(archive),
+            "size_bytes": stat.st_size,
+            "created_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+        })
+    return backups
+
+
+def prune_backups(
+    destination_dir: Path | str | None = None,
+    retention_days: int | None = None,
+) -> int:
+    """
+    Delete backup archives older than retention_days (defaults to config.BACKUP_RETENTION_DAYS).
+    Returns count of pruned archives.
+    """
+    paths = _resolve_paths()
+    dest_dir = Path(destination_dir).resolve() if destination_dir else paths["dest_dir"]
+    days = retention_days if retention_days is not None else BACKUP_RETENTION_DAYS
+    if not dest_dir.exists():
+        return 0
+
+    cutoff_ts = time.time() - (days * 86400)
+    pruned = 0
+    for archive in dest_dir.glob("lifeos_backup_*.tar.gz"):
+        if archive.stat().st_mtime < cutoff_ts:
+            archive.unlink()
+            pruned += 1
+            logger.info("Pruned expired backup: %s", archive.name)
+
+    return pruned

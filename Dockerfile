@@ -26,12 +26,13 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copy application source code
+# Copy application source code and packaging
+COPY --chown=lifeos:lifeos pyproject.toml /app/pyproject.toml
 COPY --chown=lifeos:lifeos app/ /app/app/
 COPY --chown=lifeos:lifeos .env.example /app/.env.example
 
 # Create writable persistent state directories
-RUN mkdir -p /app/data/documents /app/data/backups /app/chroma_db && \
+RUN mkdir -p /app/data/documents /app/data/backups /app/data/plugins /app/chroma_db && \
     chown -R lifeos:lifeos /app/data /app/chroma_db
 
 # Switch to unprivileged user
@@ -43,9 +44,9 @@ VOLUME ["/app/data", "/app/chroma_db"]
 # Expose HTTP port
 EXPOSE 8000
 
-# Container liveness health check
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://127.0.0.1:8000/health || exit 1
+# Container readiness health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD curl -f http://127.0.0.1:8000/ready || exit 1
 
-# Production ASGI server entrypoint (Single-process architecture)
-ENTRYPOINT ["uvicorn", "app.api.server:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+# Production entrypoint using unified LifeOS CLI
+ENTRYPOINT ["python", "-m", "app.cli", "serve"]
