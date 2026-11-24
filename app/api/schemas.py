@@ -552,3 +552,57 @@ class PeerSyncStatusResponse(BaseModel):
     last_synced_at: str | None = None
     unresolved_conflicts: int = 0
 
+
+# ============================================================
+# PLUGIN & SIDECAR EXTENSIBILITY SCHEMAS (Milestone 9)
+# ============================================================
+
+class PluginToolDeclarationSchema(BaseModel):
+    name: str = Field(..., min_length=1)
+    description: str = Field(..., min_length=1)
+    input_schema: dict[str, Any] = Field(default_factory=dict)
+
+
+class PluginRegisterRequest(BaseModel):
+    plugin_id: str = Field(..., min_length=1, pattern=r"^[a-zA-Z0-9_\-]+$")
+    name: str = Field(..., min_length=1)
+    version: str = Field(..., min_length=1)
+    description: str = ""
+    author: str = ""
+    entrypoint: str = Field(..., min_length=1)
+    workspace_scope: str | None = None
+    requested_capabilities: list[str] = Field(default_factory=list)
+    tools: list[PluginToolDeclarationSchema] = Field(default_factory=list)
+
+
+class PluginStatusResponse(BaseModel):
+    plugin_id: str
+    state: str
+    pid: int | None = None
+    workspace_scope: str | None = None
+    active_capabilities: list[str] = Field(default_factory=list)
+    crash_count: int = 0
+    circuit_breaker_tripped: bool = False
+    last_started_at: str | None = None
+    last_stopped_at: str | None = None
+    last_error: str | None = None
+
+
+class PluginInvokeRequest(BaseModel):
+    tool_name: str = Field(..., min_length=1)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class PluginInvokeResponse(BaseModel):
+    plugin_id: str
+    tool_name: str
+    success: bool
+    result: Any = None
+    error: str | None = None
+
+
+class PluginActionResponse(BaseModel):
+    plugin_id: str
+    status: str
+    message: str
+

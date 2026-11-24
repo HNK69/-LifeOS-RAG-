@@ -566,3 +566,77 @@ LifeOS Milestone 8 introduces peer-to-peer and offline-first cross-device synchr
 | `LIFEOS_SYNC_TOMBSTONE_TTL_DAYS` | `30` | Integer $\ge 1$ | Retention threshold before pruning deletion tombstones |
 | `LIFEOS_SYNC_AUTO_RESOLVE_CONFLICTS` | `true` | Boolean | Whether to apply automatic deterministic conflict resolution |
 
+---
+
+## 13. Plugin & Sidecar Extensibility Sandbox (Milestone 9)
+
+### Architecture Overview
+LifeOS Milestone 9 introduces an isolated sidecar execution sandbox for untrusted or third-party extensions. Sidecars execute as child processes communicating with the host exclusively via JSON-RPC 2.0 over standard I/O pipes.
+
+```
++-------------------------------------------------------------------------------+
+│                                LifeOS Host                                    │
+│   ┌──────────────────┐   ┌──────────────────────┐   ┌─────────────────────┐   │
+│   │   ToolRegistry   │   │  Workspace & Consent │   │ Cryptographic Audit │   │
+│   │   & Executor     │   │  Security Broker     │   │ & Privacy Log       │   │
+│   └────────▲─────────┘   └──────────▲───────────┘   └─────────▲───────────┘   │
+│            │                        │                         │               │
+│   ┌────────┴────────────────────────┴─────────────────────────┴───────────┐   │
+│   │                         HostBroker                                    │   │
+│   │  - Authoritative Security Boundary                                    │   │
+│   │  - Re-evaluates capabilities, consent, and workspace RLS on each call │   │
+│   │  - Enforces local_only air-gaps (strictly denies network:egress)       │   │
+│   │  - Token-authenticated JSON-RPC 2.0 (1MB limit, 5s execution timeout) │   │
+│   └──────────────────────────────────┬────────────────────────────────────┘   │
++──────────────────────────────────────┼────────────────────────────────────────+
+                                       │ Sanitized Environment (No host secrets)
+                                       │ Authenticated stdin/stdout IPC
++──────────────────────────────────────▼────────────────────────────────────────+
+│                      Isolated Plugin Sidecar Subprocess                       │
+│   ┌───────────────────────────────────────────────────────────────────────┐   │
+│   │                       Sidecar Tool / Capability                       │   │
+│   │  - Sandboxed working directory (data/plugins/{plugin_id}/sandbox)     │   │
+│   │  - Exported tools wrapped into SidecarTool(AgentTool) adapters        │   │
+│   │  - Monitored by PluginManager (crash backoff & circuit breaker)       │   │
+│   └───────────────────────────────────────────────────────────────────────┘   │
++───────────────────────────────────────────────────────────────────────────────+
+```
+
+### Authoritative Security & Privacy Boundary
+1. **HostBroker Gating**:
+   - The plugin subprocess has zero direct access to the host filesystem, SQLite databases, or network sockets.
+   - Every privileged IPC method (`context:read`, `context:write`, `documents:read`, `events:publish`, `network:egress`) is mediated by `HostBroker`.
+   - Permissions are never granted permanently or delegated to the child process.
+2. **Real-Time Consent & Immediate Revocation**:
+   - Capabilities require active `ConsentGrant` records (`scope_type='plugin'`, `resource_path=plugin_id`, `purpose=capability`) in `data/privacy.db`.
+   - If consent is missing, expired, or revoked, access is immediately blocked with JSON-RPC error code `-32002` (`CONSENT_DENIED`).
+3. **Workspace Air-Gap Enforcement**:
+   - If a plugin is bound to a workspace where `is_local_only=True` or `profile_type in ('confidential', 'local_only')`, `network:egress` requests are strictly blocked with error code `-32003` (`AIRGAP_VIOLATION`).
+4. **Environment Hygiene**:
+   - Host secrets (`OPENROUTER_API_KEY`, device private keys, credentials) are stripped before spawning sidecars.
+   - Child processes receive only allowlisted variables (`PATH`, `SYSTEMROOT`, `PYTHONPATH`, `LIFEOS_PLUGIN_ID`, `LIFEOS_IPC_TOKEN`, `LIFEOS_WORKSPACE_ID`).
+5. **Circuit Breaker & Crash Recovery**:
+   - Crash count is tracked within a sliding restart window (`PLUGIN_RESTART_WINDOW_SECONDS=60`).
+   - If crashes exceed `PLUGIN_MAX_RESTART_ATTEMPTS=3`, the circuit breaker trips, transitioning the plugin state to `DISABLED`.
+   - Repeated restarts enforce exponential backoff ($1\text{s}, 2\text{s}, 4\text{s}$).
+
+### Plugin REST API Endpoints (`/api/plugins`)
+- `GET /api/plugins`: List all registered plugins, lifecycle states, and active capabilities.
+- `POST /api/plugins/register`: Register a new plugin manifest and prepare its sandboxed directory.
+- `GET /api/plugins/{plugin_id}/status`: Query detailed plugin status, PID, crash counter, and circuit breaker metrics.
+- `POST /api/plugins/{plugin_id}/start`: Start a registered plugin sidecar subprocess.
+- `POST /api/plugins/{plugin_id}/stop`: Gracefully terminate a running plugin sidecar.
+- `POST /api/plugins/{plugin_id}/restart`: Restart a plugin sidecar with exponential backoff.
+- `POST /api/plugins/{plugin_id}/invoke`: Directly invoke an exported sidecar tool.
+- `DELETE /api/plugins/{plugin_id}`: Unregister a plugin, stop its process, and remove its tool registrations.
+
+### Configuration Variables
+| Variable | Default | Allowed Values | Description |
+| :--- | :--- | :--- | :--- |
+| `LIFEOS_PLUGINS_DIR` | `data/plugins` | Path | Root directory for plugin manifests and sandboxed workspaces |
+| `LIFEOS_PLUGIN_IPC_TIMEOUT_SECONDS` | `5.0` | Float $[0.5, 60.0]$ | Per-call timeout for sidecar JSON-RPC execution |
+| `LIFEOS_PLUGIN_MAX_PAYLOAD_BYTES` | `1048576` | Integer $[1024, 10485760]$ | Maximum allowed size (bytes) for a single IPC frame (1 MB) |
+| `LIFEOS_PLUGIN_MAX_RESTART_ATTEMPTS` | `3` | Integer $[1, 20]$ | Maximum crash restart budget before circuit breaker trips |
+| `LIFEOS_PLUGIN_RESTART_WINDOW_SECONDS` | `60` | Integer $[5, 3600]$ | Sliding window threshold for tracking crash frequency |
+| `LIFEOS_PLUGIN_AUTO_START` | `false` | Boolean | Whether to auto-start all registered plugins at application launch |
+

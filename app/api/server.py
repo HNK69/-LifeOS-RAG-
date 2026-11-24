@@ -46,7 +46,7 @@ from app.api.middleware import (
     RequestSizeLimiterMiddleware,
     SecurityHeadersMiddleware,
 )
-from app.api.routes import admin, connectors, context, device, documents, events, health, metrics, people, privacy, query, routing, sync, workspaces
+from app.api.routes import admin, connectors, context, device, documents, events, health, metrics, people, plugins, privacy, query, routing, sync, workspaces
 
 
 @asynccontextmanager
@@ -205,6 +205,7 @@ def create_app() -> FastAPI:
     app.include_router(workspaces.router)
     app.include_router(routing.router)
     app.include_router(sync.router)
+    app.include_router(plugins.router)
     app.include_router(events.router, prefix="/api/events", tags=["events"])
     app.add_api_websocket_route("/ws/events", events.websocket_event_endpoint)
 

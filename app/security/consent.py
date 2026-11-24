@@ -322,7 +322,7 @@ def is_consent_granted(
             grant_norm = Path(_normalize_path_str(g.resource_path))
             if cand_norm == grant_norm or cand_norm.is_relative_to(grant_norm):
                 return True
-        elif g.scope_type == "connector":
+        elif g.scope_type in ("connector", "plugin"):
             if str(candidate_path) == g.resource_path:
                 return True
 

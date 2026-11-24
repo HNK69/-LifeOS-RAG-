@@ -445,6 +445,18 @@ SYNC_AUTO_RESOLVE_CONFLICTS = _get_env_bool("LIFEOS_SYNC_AUTO_RESOLVE_CONFLICTS"
 
 
 # ============================================================
+# PLUGIN & SIDECAR EXTENSIBILITY SANDBOX (MILESTONE 9)
+# ============================================================
+
+PLUGINS_DIR = _get_env_path("LIFEOS_PLUGINS_DIR", DATA_DIR / "plugins")
+PLUGIN_IPC_TIMEOUT_SECONDS = _get_env_float("LIFEOS_PLUGIN_IPC_TIMEOUT_SECONDS", 5.0, min_val=0.5, max_val=60.0)
+PLUGIN_MAX_PAYLOAD_BYTES = _get_env_int("LIFEOS_PLUGIN_MAX_PAYLOAD_BYTES", 1048576, min_val=1024, max_val=10485760)
+PLUGIN_MAX_RESTART_ATTEMPTS = _get_env_int("LIFEOS_PLUGIN_MAX_RESTART_ATTEMPTS", 3, min_val=1, max_val=20)
+PLUGIN_RESTART_WINDOW_SECONDS = _get_env_int("LIFEOS_PLUGIN_RESTART_WINDOW_SECONDS", 60, min_val=5, max_val=3600)
+PLUGIN_AUTO_START = _get_env_bool("LIFEOS_PLUGIN_AUTO_START", False)
+
+
+# ============================================================
 # VALIDATION
 # ============================================================
 
