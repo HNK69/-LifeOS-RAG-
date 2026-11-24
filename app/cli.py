@@ -27,13 +27,68 @@ from app.storage.backup import create_backup, list_backups, prune_backups, resto
 logger = logging.getLogger("lifeos.cli")
 
 
+def _find_free_port() -> int:
+    """Find an available ephemeral port on 127.0.0.1."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     """Start the production LifeOS server."""
+    import os
+    import secrets
     import uvicorn
     try:
         import config as cfg
     except ImportError:
         import app.config as cfg
+
+    sidecar_mode = getattr(args, "sidecar_mode", False)
+
+    if sidecar_mode:
+        # Enforce security boundary: sidecar strictly binds to 127.0.0.1
+        if args.host and args.host not in ("127.0.0.1", "localhost"):
+            sys.stderr.write(f"Error: Sidecar mode strictly requires 127.0.0.1 (received '{args.host}').\n")
+            return 1
+        host = "127.0.0.1"
+        port = args.port
+        if not port or port == 0:
+            port = _find_free_port()
+
+        workers = 1
+        log_fmt = args.log_format or getattr(cfg, "LOG_FORMAT", "text")
+
+        # Ephemeral session token for IPC authentication
+        session_token = getattr(args, "token", None) or secrets.token_urlsafe(32)
+        cfg.API_KEY = session_token
+        cfg.API_AUTH_ENABLED = True
+        os.environ["LIFEOS_API_KEY"] = session_token
+        os.environ["LIFEOS_API_AUTH_ENABLED"] = "true"
+        os.environ["LIFEOS_LOCAL_ONLY"] = "true"
+
+        # Emit structured JSON handshake to stdout for Tauri/parent process
+        handshake = {
+            "event": "sidecar_ready",
+            "status": "ready",
+            "host": host,
+            "port": port,
+            "token": session_token,
+            "pid": os.getpid(),
+        }
+        sys.stdout.write(json.dumps(handshake) + "\n")
+        sys.stdout.flush()
+
+        uvicorn.run(
+            "app.api.server:app",
+            host=host,
+            port=port,
+            workers=workers,
+            log_level="info",
+            reload=False,
+        )
+        return 0
 
     host = args.host or getattr(cfg, "API_HOST", "0.0.0.0")
     port = args.port or getattr(cfg, "API_PORT", 8000)
@@ -157,6 +212,8 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--workers", type=int, default=None, help="Number of worker processes")
     serve_parser.add_argument("--log-format", choices=["text", "json"], default=None, help="Log format")
     serve_parser.add_argument("--reload", action="store_true", help="Enable dev auto-reloading")
+    serve_parser.add_argument("--sidecar-mode", action="store_true", help="Run as managed desktop sidecar (binds 127.0.0.1, emits handshake JSON)")
+    serve_parser.add_argument("--token", default=None, help="Session token for sidecar mode authentication")
 
     # 2. lifeos doctor
     doc_parser = subparsers.add_parser("doctor", help="Run pre-flight system diagnostics")

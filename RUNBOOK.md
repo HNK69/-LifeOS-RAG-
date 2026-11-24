@@ -732,3 +732,65 @@ lifeos status
 | `LIFEOS_LOG_MASK_SECRETS` | `true` | Boolean | Whether logging filters scrub sensitive tokens and credentials |
 | `LIFEOS_DOCTOR_STRICT_MODE` | `false` | Boolean | Whether pre-flight diagnostics fail on warnings as well as errors |
 
+---
+
+## 15. Desktop Shell, Sidecar Manager & Client SDK (Milestone C1)
+
+### Architecture Overview
+LifeOS Milestone C1 establishes the native desktop application foundation (Tauri v2 + React 18 + TypeScript + Vite) with a dedicated Rust sidecar lifecycle manager that supervises the local Python backend engine.
+
+```
++-------------------------------------------------------------------------------+
+|                       Tauri v2 Desktop Application                            |
+|                                                                               |
+|  +--------------------------------+       +--------------------------------+  |
+|  |     React 18 + TypeScript UI   |       |   Rust SidecarManager          |  |
+|  |  - LifeOSWebClient (HTTP SDK)  | <---> |  - Spawns python -m app.cli    |  |
+|  |  - LifeOSEventClient (SSE/WS)  | IPC   |    serve --sidecar-mode        |  |
+|  |  - SecureOSCredentialStore     |       |  - Parses ready handshake JSON |  |
+|  |  - useEventStream, useLifeOS   |       |  - Polls /ready with Bearer tok|  |
+|  +--------------------------------+       |  - Supervises child PID        |  |
+|                                           |  - Enforces clean kill/exit    |  |
+|                                           +--------------------------------+  |
++------------------------------------------------------------|------------------+
+                                                             | (Loopback HTTP / SSE)
+                                                             v
++-------------------------------------------------------------------------------+
+|                        Localhost LifeOS Sidecar Engine                        |
+|                                                                               |
+|  - Strictly bound to 127.0.0.1 (rejects all external/LAN addresses)           |
+|  - Dynamic ephemeral port allocation (--port 0)                               |
+|  - Cryptographically generated request-scoped session token (secrets.token)   |
+|  - Emits JSON handshake to stdout:                                            |
+|    {"event": "sidecar_ready", "status": "ready", "host": "127.0.0.1", ...}    |
+|  - 100% Local-First mode enforced (no remote telemetry, no external egress)   |
++-------------------------------------------------------------------------------+
+```
+
+### Sidecar Handshake Protocol
+When invoked with `--sidecar-mode`:
+1. Host validation: Strictly requires `127.0.0.1` or `localhost`. Attempting to pass `0.0.0.0` or any other IP immediately terminates with exit code 1.
+2. Port allocation: When `--port 0` is passed, the CLI dynamically discovers an open loopback port via `socket.bind(('127.0.0.1', 0))`.
+3. Session Authentication: Generates a high-entropy URL-safe token (or accepts `--token <explicit_token>`) and enforces `API_AUTH_ENABLED=True`.
+4. Handshake Emission: Emits a single line of JSON to stdout and flushes immediately:
+   ```json
+   {"event": "sidecar_ready", "status": "ready", "host": "127.0.0.1", "port": 54321, "token": "<session_token>", "pid": 12345}
+   ```
+5. Polling & Readiness: The parent process (Rust/Tauri) reads this line and polls `http://127.0.0.1:<port>/ready` with `Authorization: Bearer <token>` until HTTP 200 OK before exposing UI.
+
+### Desktop Development Commands
+```bash
+# Navigate to desktop directory
+cd desktop
+
+# Install frontend dependencies
+npm install
+
+# Run TypeScript deterministic test suite (vitest)
+npm test
+
+# Build production frontend bundle
+npm run build
+```
+
+

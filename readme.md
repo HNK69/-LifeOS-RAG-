@@ -520,6 +520,20 @@ python -m app.cli backup restore data/backups/lifeos_backup_20261124_170000.tar.
 
 # Inspect system status
 python -m app.cli status
+
+# Start in managed desktop sidecar mode
+python -m app.cli serve --sidecar-mode --port 0
+```
+
+### Desktop Client (Tauri v2 + React 18 + TypeScript)
+
+The LifeOS desktop client provides a local-first interface with sidecar lifecycle supervision:
+
+```bash
+cd desktop
+npm install
+npm test       # Run TypeScript vitest suite
+npm run build  # Build production frontend
 ```
 
 ---
