@@ -466,6 +466,24 @@ DOCTOR_STRICT_MODE = _get_env_bool("LIFEOS_DOCTOR_STRICT_MODE", False)
 
 
 # ============================================================
+# RESOURCE GOVERNOR & SOURCE DISCOVERY (MILESTONE C2)
+# ============================================================
+
+GOVERNOR_ENABLED = _get_env_bool("LIFEOS_GOVERNOR_ENABLED", True)
+GOVERNOR_MAX_CPU_PERCENT = _get_env_float("LIFEOS_GOVERNOR_MAX_CPU_PERCENT", 80.0, min_val=5.0, max_val=100.0)
+GOVERNOR_MAX_RAM_PERCENT = _get_env_float("LIFEOS_GOVERNOR_MAX_RAM_PERCENT", 85.0, min_val=10.0, max_val=100.0)
+GOVERNOR_PAUSE_ON_BATTERY = _get_env_bool("LIFEOS_GOVERNOR_PAUSE_ON_BATTERY", True)
+GOVERNOR_MIN_USER_IDLE_SECONDS = _get_env_float("LIFEOS_GOVERNOR_MIN_USER_IDLE_SECONDS", 0.0, min_val=0.0)
+
+DISCOVERY_ENABLED = _get_env_bool("LIFEOS_DISCOVERY_ENABLED", True)
+DISCOVERY_INTERVAL_SECONDS = _get_env_float("LIFEOS_DISCOVERY_INTERVAL_SECONDS", 60.0, min_val=1.0)
+DISCOVERY_CANDIDATE_ROOTS = [
+    str(Path.home() / "Documents"),
+    str(Path.home() / "Downloads"),
+]
+
+
+# ============================================================
 # VALIDATION
 # ============================================================
 

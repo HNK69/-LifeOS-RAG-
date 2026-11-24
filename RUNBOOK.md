@@ -793,4 +793,59 @@ npm test
 npm run build
 ```
 
+---
+
+## 16. Resource Governor & Consent-First Ingestion Daemon (Milestone C2)
+
+### Architecture Overview
+Milestone C2 implements intelligent host resource governance and consent-first source discovery to prevent background indexing from freezing user workstations or draining laptop batteries.
+
+```
++-------------------------------------------------------------------------------+
+|                       Hardware Governor (app/ops/governor.py)                 |
+|                                                                               |
+|  - Zero-dependency native platform sampling (Windows ctypes / POSIX proc)     |
+|  - Tracks CPU %, RAM %, Battery (AC vs discharging), Thermal, User Idle time  |
+|  - Evaluates configurable thresholds (max CPU 80%, max RAM 85%, pause battery)|
+|  - Decision: should_pause_ingestion() -> (bool, reason)                       |
++-------------------------------------------------------------------------------+
+                                      |
+                   +------------------+------------------+
+                   |                                     |
+                   v                                     v
++-------------------------------------+   +-------------------------------------+
+|     Ingestion QueueWorker           |   |     SourceDiscoveryDaemon           |
+| (app/ingestion/queue.py)            |   | (app/connectors/discovery.py)       |
+|                                     |   |                                     |
+| - Consults governor before claiming |   | - Monitors candidate roots:         |
+| - On throttle: safe pause, sleeps,  |   |   (~/Documents, ~/Downloads)        |
+|   zero retry consumption,           |   | - Checks is_consent_granted()       |
+|   zero poison-pill quarantine       |   | - If unconsented: shallow scan ONLY |
+| - Emits system.governor_throttled   |   |   (NEVER crawls/indexes without OK) |
+|   event over EventBus               |   | - Emits privacy.discovery_detected  |
++-------------------------------------+   +-------------------------------------+
+                                                             |
+                                                             v
++-------------------------------------------------------------------------------+
+|                      Desktop Consent Prompt (React + TypeScript)              |
+|                                                                               |
+| - Listens to privacy.discovery_detected via useEventStream                    |
+| - Displays prompt: "New Source Folder Detected: ~/Documents (N files)"        |
+| - "Authorize & Index" calls POST /api/privacy/consent                         |
+| - Preserves strict connector path authorization boundary                      |
++-------------------------------------------------------------------------------+
+```
+
+### Configuration Variables
+| Variable | Default | Allowed Values | Description |
+| :--- | :--- | :--- | :--- |
+| `LIFEOS_GOVERNOR_ENABLED` | `true` | Boolean | Enable/disable intelligent host resource governance |
+| `LIFEOS_GOVERNOR_MAX_CPU_PERCENT` | `80.0` | Float $5.0–100.0$ | CPU threshold above which ingestion pauses |
+| `LIFEOS_GOVERNOR_MAX_RAM_PERCENT` | `85.0` | Float $10.0–100.0$ | RAM utilization threshold above which ingestion pauses |
+| `LIFEOS_GOVERNOR_PAUSE_ON_BATTERY` | `true` | Boolean | Pause background ingestion when operating on battery |
+| `LIFEOS_GOVERNOR_MIN_USER_IDLE_SECONDS` | `0.0` | Float $\ge 0.0$ | Minimum idle seconds required before indexing (0=disabled) |
+| `LIFEOS_DISCOVERY_ENABLED` | `true` | Boolean | Enable automatic folder discovery daemon |
+| `LIFEOS_DISCOVERY_INTERVAL_SECONDS` | `60.0` | Float $\ge 1.0$ | Discovery daemon candidate scan interval |
+
+
 

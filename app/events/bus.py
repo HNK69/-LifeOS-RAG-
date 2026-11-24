@@ -86,8 +86,13 @@ class EventBus:
         """
         Evaluate real-time privacy consent against event resource_path.
         If consent is not granted or has expired, redact path information.
+        Discovery and consent mutation events are exempt as they represent user prompts/updates.
         """
         if not event.resource_path:
+            return event
+
+        # Consent discovery and mutation events must preserve the proposed path for user decision
+        if event.event_type in ("privacy.discovery_detected", "privacy.consent_changed"):
             return event
 
         try:
@@ -153,7 +158,21 @@ class EventBus:
         else:
             # Fallback for synchronous test environments without an active loop
             with self._lock:
-                self._buffer.append(self._filter_privacy(event))
+                filtered_event = self._filter_privacy(event)
+                self._buffer.append(filtered_event)
+                subs = list(self._subscribers)
+            for queue in subs:
+                topics = self._subscriber_filters.get(queue)
+                if self._matches_topics(filtered_event.event_type, topics):
+                    try:
+                        if queue.full():
+                            try:
+                                queue.get_nowait()
+                            except Exception:
+                                pass
+                        queue.put_nowait(filtered_event)
+                    except Exception as exc:
+                        logger.warning(f"Failed to deliver event {filtered_event.event_id} to subscriber: {exc}")
 
     def get_events_since(self, last_event_id: str) -> list[LifeOSEvent]:
         """

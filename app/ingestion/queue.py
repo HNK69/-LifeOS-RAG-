@@ -403,6 +403,15 @@ def process_next_job(db_path: Path | str | None = None) -> bool:
     if is_reindexing_active():
         return False
 
+    try:
+        from app.ops.governor import get_governor
+        governor = get_governor()
+        should_pause, _ = governor.should_pause_ingestion()
+        if should_pause:
+            return False
+    except Exception:
+        pass
+
     job = claim_next_job(db_path=db_path)
     if not job:
         return False
@@ -444,6 +453,29 @@ class QueueWorker:
         self._stop_event = threading.Event()
         self._running = False
         self._healthy = True
+        self._is_throttled = False
+        self._throttle_reason: str | None = None
+
+    @property
+    def is_throttled(self) -> bool:
+        return self._is_throttled
+
+    @property
+    def throttle_reason(self) -> str | None:
+        return self._throttle_reason
+
+    def _emit_governor_event(self, throttled: bool, reason: str | None = None) -> None:
+        try:
+            from app.events.bus import get_event_bus
+            from app.events.models import LifeOSEvent
+            bus = get_event_bus()
+            bus.publish_sync(LifeOSEvent(
+                event_type="system.governor_throttled",
+                producer="ingestion.governor",
+                payload={"throttled": throttled, "reason": reason},
+            ))
+        except Exception:
+            pass
 
     def start(self) -> None:
         if self._running and self._thread and self._thread.is_alive():
@@ -462,8 +494,30 @@ class QueueWorker:
 
     def _run_loop(self) -> None:
         try:
+            from app.ops.governor import get_governor
+            governor = get_governor()
+        except Exception:
+            governor = None
+
+        try:
             while not self._stop_event.is_set():
                 try:
+                    if governor:
+                        should_pause, reason = governor.should_pause_ingestion()
+                        if should_pause:
+                            if not self._is_throttled:
+                                self._is_throttled = True
+                                self._throttle_reason = reason
+                                logger.info(f"Ingestion queue paused by HardwareGovernor: {reason}")
+                                self._emit_governor_event(throttled=True, reason=reason)
+                            self._stop_event.wait(timeout=self.poll_interval)
+                            continue
+                        elif self._is_throttled:
+                            self._is_throttled = False
+                            self._throttle_reason = None
+                            logger.info("Ingestion queue resumed by HardwareGovernor.")
+                            self._emit_governor_event(throttled=False, reason=None)
+
                     did_work = process_next_job(db_path=self.db_path)
                     if not did_work:
                         self._stop_event.wait(timeout=self.poll_interval)

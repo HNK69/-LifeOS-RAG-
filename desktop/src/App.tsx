@@ -1,13 +1,29 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Header } from "./components/Header";
 import { EventLogStream } from "./components/EventLogStream";
+import { ConsentPrompt, DiscoveredSource } from "./components/ConsentPrompt";
 import { useLifeOS } from "./hooks/useLifeOS";
 import { useEventStream } from "./hooks/useEventStream";
 
 export const App: React.FC = () => {
   const [baseUrl] = useState("http://127.0.0.1:8000");
-  const { sidecarState, health, readiness, error, refresh } = useLifeOS(baseUrl);
+  const { client, sidecarState, health, readiness, error, refresh } = useLifeOS(baseUrl);
   const { connectionState: sseState, events, clearEvents } = useEventStream(baseUrl);
+  const [activeDiscovery, setActiveDiscovery] = useState<DiscoveredSource | null>(null);
+
+  // Detect incoming discovery events from real-time event stream
+  useEffect(() => {
+    const latestDiscovery = events.find((e) => e.event_type === "privacy.discovery_detected");
+    if (latestDiscovery && latestDiscovery.payload) {
+      setActiveDiscovery({
+        resource_path: latestDiscovery.payload.resource_path || "",
+        scope_type: latestDiscovery.payload.scope_type || "folder",
+        suggested_name: latestDiscovery.payload.suggested_name || "Discovered Folder",
+        file_count: latestDiscovery.payload.file_count || 0,
+        discovered_at: latestDiscovery.payload.discovered_at || latestDiscovery.timestamp,
+      });
+    }
+  }, [events]);
 
   return (
     <div
@@ -21,8 +37,20 @@ export const App: React.FC = () => {
     >
       <Header sidecarState={sidecarState} sseState={sseState} />
 
-      <main style={{ flex: 1, padding: "20px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", overflow: "hidden" }}>
-        {/* Left: System & Sidecar Status */}
+      <main style={{ flex: 1, padding: "20px", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        {/* Consent Prompt Banner (Top) */}
+        <ConsentPrompt
+          client={client}
+          discovery={activeDiscovery}
+          onDismiss={() => setActiveDiscovery(null)}
+          onAuthorized={() => {
+            setActiveDiscovery(null);
+            refresh();
+          }}
+        />
+
+        <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", overflow: "hidden" }}>
+          {/* Left: System & Sidecar Status */}
         <section
           style={{
             backgroundColor: "#ffffff",
@@ -124,6 +152,7 @@ export const App: React.FC = () => {
         <section style={{ height: "100%", overflow: "hidden" }}>
           <EventLogStream events={events} onClear={clearEvents} />
         </section>
+        </div>
       </main>
     </div>
   );

@@ -536,6 +536,12 @@ npm test       # Run TypeScript vitest suite
 npm run build  # Build production frontend
 ```
 
+### Resource Governor & Source Discovery (Milestone C2)
+
+- **Hardware Governor**: Monitors host CPU, RAM, Battery (AC vs. discharging), and user activity to dynamically pause/resume background ingestion without job loss or retry consumption.
+- **Source Discovery Daemon**: Scans candidate top-level directories (`~/Documents`, `~/Downloads`) and dispatches `privacy.discovery_detected` approval requests to the desktop UI.
+- **Consent-First Security**: Enforces zero background crawling or indexing without prior explicit user consent.
+
 ---
 
 ## Testing
