@@ -51,7 +51,7 @@ fn main() {
             let state = app_handle.state::<AppState>();
             if let Ok(mgr) = state.sidecar.lock() {
                 let _ = mgr.stop();
-            }
+            };
         }
     });
 }
