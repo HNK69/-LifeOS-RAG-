@@ -241,6 +241,12 @@ def test_queue_worker_execution_lifecycle(tmp_path, monkeypatch):
     import app.ingestion.ingest as ingest_mod
     monkeypatch.setattr(ingest_mod, "ingest_file", mock_ingest)
 
+    # Ensure governor does not pause the worker on battery / constrained hardware
+    monkeypatch.setattr(
+        "app.ops.governor.HardwareGovernor.should_pause_ingestion",
+        lambda self: (False, None),
+    )
+
     worker = QueueWorker(poll_interval=0.05, db_path=queue_db)
     assert not worker.is_running()
 
@@ -394,6 +400,12 @@ def test_100_job_continuous_ingestion_and_memory_stability(tmp_path, monkeypatch
         p.write_text(f"Synthetic document content {i}", encoding="utf-8")
         doc_paths.append(p)
 
+    # Ensure governor does not pause the worker on battery / constrained hardware
+    monkeypatch.setattr(
+        "app.ops.governor.HardwareGovernor.should_pause_ingestion",
+        lambda self: (False, None),
+    )
+
     worker = QueueWorker(poll_interval=0.01, db_path=queue_db)
     worker.start()
 
@@ -450,6 +462,12 @@ def test_queue_worker_unhandled_exception_shielding(tmp_path, monkeypatch):
 
     import app.ingestion.ingest as ingest_mod
     monkeypatch.setattr(ingest_mod, "ingest_file", mock_exploding_ingest)
+
+    # Ensure governor does not pause the worker on battery / constrained hardware
+    monkeypatch.setattr(
+        "app.ops.governor.HardwareGovernor.should_pause_ingestion",
+        lambda self: (False, None),
+    )
 
     worker = QueueWorker(poll_interval=0.02, db_path=queue_db)
     worker.start()
