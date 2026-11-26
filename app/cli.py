@@ -64,8 +64,14 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         session_token = getattr(args, "token", None) or secrets.token_urlsafe(32)
         cfg.API_KEY = session_token
         cfg.API_AUTH_ENABLED = True
+        cfg.API_PORT = port
+        if "app.config" in sys.modules:
+            sys.modules["app.config"].API_KEY = session_token
+            sys.modules["app.config"].API_AUTH_ENABLED = True
+            sys.modules["app.config"].API_PORT = port
         os.environ["LIFEOS_API_KEY"] = session_token
         os.environ["LIFEOS_API_AUTH_ENABLED"] = "true"
+        os.environ["LIFEOS_API_PORT"] = str(port)
         os.environ["LIFEOS_LOCAL_ONLY"] = "true"
 
         # Emit structured JSON handshake to stdout for Tauri/parent process

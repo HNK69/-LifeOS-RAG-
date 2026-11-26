@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app.security.device_identity import DeviceIdentity, verify_signature
+from app.security.device_identity import DeviceIdentity, get_device_identity, verify_signature
 from app.storage.sqlite import connect_sqlite
 
 try:
@@ -65,9 +65,17 @@ def initialize_identity_store(db_path: Path | str | None = None) -> None:
                 trust_status TEXT NOT NULL, -- 'paired', 'pending', 'revoked'
                 paired_at TEXT NOT NULL,
                 last_seen_at TEXT,
-                metadata_json TEXT
+                metadata_json TEXT,
+                device_token TEXT
             )
         """)
+
+        td_cols = {
+            r["name"]
+            for r in conn.execute("PRAGMA table_info(trusted_devices)").fetchall()
+        }
+        if "device_token" not in td_cols:
+            conn.execute("ALTER TABLE trusted_devices ADD COLUMN device_token TEXT")
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS pairing_challenges (
@@ -76,11 +84,20 @@ def initialize_identity_store(db_path: Path | str | None = None) -> None:
                 challenge_code TEXT NOT NULL,
                 expires_at TEXT NOT NULL,
                 created_at TEXT NOT NULL,
-                status TEXT NOT NULL -- 'pending', 'verified', 'expired'
+                status TEXT NOT NULL, -- 'pending', 'verified', 'expired'
+                pairing_token TEXT
             )
         """)
 
+        chal_cols = {
+            r["name"]
+            for r in conn.execute("PRAGMA table_info(pairing_challenges)").fetchall()
+        }
+        if "pairing_token" not in chal_cols:
+            conn.execute("ALTER TABLE pairing_challenges ADD COLUMN pairing_token TEXT")
+
         conn.execute("CREATE INDEX IF NOT EXISTS idx_trusted_status ON trusted_devices(trust_status)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_trusted_token ON trusted_devices(device_token)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_challenge_peer ON pairing_challenges(peer_device_id, status)")
 
 
@@ -120,10 +137,12 @@ def register_trusted_device(
     exchange_public_key: str,
     trust_status: str = "paired",
     metadata: dict[str, Any] | None = None,
+    device_token: str | None = None,
     db_path: Path | str | None = None,
 ) -> None:
     """Register or update a peer device in the trusted store."""
     target_path = _get_db_path(db_path)
+    initialize_identity_store(target_path)
     now_iso = datetime.now(timezone.utc).isoformat()
     meta_str = json.dumps(metadata or {})
 
@@ -132,16 +151,21 @@ def register_trusted_device(
             INSERT INTO trusted_devices (
                 device_id, device_name, device_type,
                 signing_public_key, exchange_public_key,
-                trust_status, paired_at, last_seen_at, metadata_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                trust_status, paired_at, last_seen_at, metadata_json, device_token
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(device_id) DO UPDATE SET
                 device_name = excluded.device_name,
                 device_type = excluded.device_type,
                 signing_public_key = excluded.signing_public_key,
                 exchange_public_key = excluded.exchange_public_key,
                 trust_status = excluded.trust_status,
+                paired_at = CASE
+                    WHEN excluded.trust_status = 'paired' THEN excluded.paired_at
+                    ELSE trusted_devices.paired_at
+                END,
                 last_seen_at = excluded.last_seen_at,
-                metadata_json = excluded.metadata_json
+                metadata_json = excluded.metadata_json,
+                device_token = COALESCE(excluded.device_token, trusted_devices.device_token)
         """, (
             device_id,
             device_name,
@@ -152,6 +176,7 @@ def register_trusted_device(
             now_iso,
             now_iso,
             meta_str,
+            device_token,
         ))
 
 
@@ -176,6 +201,33 @@ def get_trusted_device(device_id: str, db_path: Path | str | None = None) -> dic
         else:
             data["metadata"] = {}
         return data
+
+
+def get_trusted_device_by_token(token: str, db_path: Path | str | None = None) -> dict[str, Any] | None:
+    """Retrieve a paired trusted device matching the given device-scoped auth token."""
+    if not token or not isinstance(token, str) or not token.startswith("devtok_"):
+        return None
+    target_path = _get_db_path(db_path)
+    if not target_path.exists():
+        return None
+    initialize_identity_store(target_path)
+    with connect_sqlite(target_path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM trusted_devices WHERE trust_status = 'paired' AND device_token IS NOT NULL"
+        ).fetchall()
+        for row in rows:
+            stored_tok = row["device_token"]
+            if stored_tok and secrets.compare_digest(stored_tok, token):
+                data = dict(row)
+                if data.get("metadata_json"):
+                    try:
+                        data["metadata"] = json.loads(data["metadata_json"])
+                    except Exception:
+                        data["metadata"] = {}
+                else:
+                    data["metadata"] = {}
+                return data
+    return None
 
 
 def list_trusted_devices(
@@ -210,15 +262,29 @@ def list_trusted_devices(
 
 
 def revoke_trusted_device(device_id: str, db_path: Path | str | None = None) -> bool:
-    """Revoke a peer device's trusted status."""
+    """Revoke a peer device's trusted status, clear its device token, and broadcast device.revoked event."""
     target_path = _get_db_path(db_path)
     now_iso = datetime.now(timezone.utc).isoformat()
     with connect_sqlite(target_path) as conn:
         cursor = conn.execute(
-            "UPDATE trusted_devices SET trust_status = 'revoked', last_seen_at = ? WHERE device_id = ?",
+            "UPDATE trusted_devices SET trust_status = 'revoked', device_token = NULL, last_seen_at = ? WHERE device_id = ?",
             (now_iso, device_id),
         )
-        return cursor.rowcount > 0
+        revoked = cursor.rowcount > 0
+
+    if revoked:
+        try:
+            from app.events.bus import get_event_bus
+            from app.events.models import LifeOSEvent
+            get_event_bus().publish_sync(LifeOSEvent(
+                event_type="device.revoked",
+                producer="device",
+                payload={"device_id": device_id, "status": "revoked", "revoked_at": now_iso},
+            ))
+        except Exception:
+            pass
+
+    return revoked
 
 
 def update_peer_last_seen(device_id: str, db_path: Path | str | None = None) -> None:
@@ -233,30 +299,34 @@ def update_peer_last_seen(device_id: str, db_path: Path | str | None = None) -> 
 
 
 def create_pairing_challenge(
-    peer_device_id: str,
+    peer_device_id: str | None = "*",
     ttl_seconds: int = 300,
     db_path: Path | str | None = None,
 ) -> dict[str, Any]:
     """Generate a high-entropy 6-digit numeric pairing code with a strict expiration window."""
     target_path = _get_db_path(db_path)
+    initialize_identity_store(target_path)
+    effective_peer_id = peer_device_id.strip() if peer_device_id and peer_device_id.strip() else "*"
     now = datetime.now(timezone.utc)
     expires_at = datetime.fromtimestamp(now.timestamp() + ttl_seconds, tz=timezone.utc).isoformat()
     challenge_id = f"chal_{secrets.token_hex(12)}"
     code = f"{secrets.randbelow(1_000_000):06d}"
+    pairing_token = f"pair_{secrets.token_urlsafe(24)}"
 
     with connect_sqlite(target_path) as conn:
         conn.execute("""
             INSERT INTO pairing_challenges (
-                challenge_id, peer_device_id, challenge_code, expires_at, created_at, status
-            ) VALUES (?, ?, ?, ?, ?, 'pending')
-        """, (challenge_id, peer_device_id, code, expires_at, now.isoformat()))
+                challenge_id, peer_device_id, challenge_code, expires_at, created_at, status, pairing_token
+            ) VALUES (?, ?, ?, ?, ?, 'pending', ?)
+        """, (challenge_id, effective_peer_id, code, expires_at, now.isoformat(), pairing_token))
 
     result = {
         "challenge_id": challenge_id,
-        "peer_device_id": peer_device_id,
+        "peer_device_id": effective_peer_id,
         "challenge_code": code,
         "expires_at": expires_at,
         "created_at": now.isoformat(),
+        "pairing_token": pairing_token,
     }
 
     try:
@@ -265,12 +335,38 @@ def create_pairing_challenge(
         get_event_bus().publish_sync(LifeOSEvent(
             event_type="device.pairing_requested",
             producer="device",
-            payload={"challenge_id": challenge_id, "peer_device_id": peer_device_id, "expires_at": expires_at},
+            payload={"challenge_id": challenge_id, "peer_device_id": effective_peer_id, "expires_at": expires_at},
         ))
     except Exception:
         pass
 
     return result
+
+
+def verify_pairing_token(
+    challenge_id: str,
+    token: str,
+    db_path: Path | str | None = None,
+) -> bool:
+    """Validate an ephemeral single-use pairing_token for an active pending challenge."""
+    if not challenge_id or not token:
+        return False
+    target_path = _get_db_path(db_path)
+    now = datetime.now(timezone.utc)
+    with connect_sqlite(target_path) as conn:
+        row = conn.execute(
+            "SELECT status, expires_at, pairing_token FROM pairing_challenges WHERE challenge_id = ?",
+            (challenge_id,),
+        ).fetchone()
+        if not row or row["status"] != "pending" or not row["pairing_token"]:
+            return False
+        try:
+            is_expired = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00")) < now
+        except Exception:
+            is_expired = row["expires_at"] < now.isoformat()
+        if is_expired:
+            return False
+        return secrets.compare_digest(row["pairing_token"], token)
 
 
 def verify_pairing_challenge(
@@ -286,12 +382,13 @@ def verify_pairing_challenge(
 ) -> bool:
     """
     Verify pairing challenge:
-    1. Validates code match and expiration.
+    1. Validates peer binding (if challenge was not wildcard), code match, and expiration.
     2. Verifies cryptographic signature from peer signing key over challenge payload.
-    3. Promotes peer to 'paired' status in trusted_devices.
+    3. Promotes peer to 'paired' status in trusted_devices and emits device.pairing_completed.
     """
     target_path = _get_db_path(db_path)
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
 
     with connect_sqlite(target_path) as conn:
         row = conn.execute(
@@ -307,13 +404,37 @@ def verify_pairing_challenge(
             logger.warning(f"Pairing challenge {challenge_id} is not pending (status: {row['status']}).")
             return False
 
-        if row["expires_at"] < now_iso:
+        try:
+            is_expired = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00")) < now
+        except Exception:
+            is_expired = row["expires_at"] < now_iso
+
+        if is_expired:
             conn.execute(
                 "UPDATE pairing_challenges SET status = 'expired' WHERE challenge_id = ?",
                 (challenge_id,),
             )
             logger.warning(f"Pairing challenge {challenge_id} has expired.")
             return False
+
+        expected_peer = (row["peer_device_id"] or "").strip()
+        if expected_peer not in ("*", "", "pending") and expected_peer != peer_device_id:
+            logger.warning(
+                f"Pairing challenge {challenge_id} peer mismatch: expected '{expected_peer}', got '{peer_device_id}'."
+            )
+            return False
+
+        # Reject desktop self-impersonation
+        try:
+            local_dev_id = get_device_identity().device_id
+        except Exception:
+            local_dev_id = None
+        local_row = conn.execute(
+            "SELECT device_id FROM local_identity WHERE device_id = ?",
+            (peer_device_id,),
+        ).fetchone()
+        if (local_dev_id and peer_device_id == local_dev_id) or local_row is not None:
+            raise ValueError("Cannot pair desktop with itself")
 
         # Constant-time comparison of pairing code
         if not secrets.compare_digest(row["challenge_code"], challenge_code.strip()):
@@ -326,13 +447,30 @@ def verify_pairing_challenge(
             logger.warning(f"Signature verification failed for peer {peer_device_id} on challenge {challenge_id}.")
             return False
 
-        # Mark challenge verified
+        # Prevent revoked device resurrection and key hijacking on existing paired devices
+        existing_peer = conn.execute(
+            "SELECT trust_status, signing_public_key, exchange_public_key FROM trusted_devices WHERE device_id = ?",
+            (peer_device_id,),
+        ).fetchone()
+        if existing_peer:
+            if existing_peer["trust_status"] == "revoked":
+                raise ValueError("Revoked device cannot be re-paired via wildcard pairing")
+            if existing_peer["trust_status"] == "paired":
+                if (
+                    existing_peer["signing_public_key"] != peer_signing_pub_b64
+                    or existing_peer["exchange_public_key"] != peer_exchange_pub_b64
+                ):
+                    raise ValueError("Device ID already paired with different cryptographic identity")
+
+        # Mark challenge verified and clear single-use pairing_token
         conn.execute(
-            "UPDATE pairing_challenges SET status = 'verified' WHERE challenge_id = ?",
+            "UPDATE pairing_challenges SET status = 'verified', pairing_token = NULL WHERE challenge_id = ?",
             (challenge_id,),
         )
 
-    # Register as trusted device
+    device_token = f"devtok_{secrets.token_urlsafe(32)}"
+
+    # Register as trusted device with issued device-scoped token
     register_trusted_device(
         device_id=peer_device_id,
         device_name=peer_device_name,
@@ -340,7 +478,25 @@ def verify_pairing_challenge(
         signing_public_key=peer_signing_pub_b64,
         exchange_public_key=peer_exchange_pub_b64,
         trust_status="paired",
+        device_token=device_token,
         db_path=target_path,
     )
     logger.info(f"Successfully paired and trusted device {peer_device_id} ({peer_device_name})")
+
+    try:
+        from app.events.bus import get_event_bus
+        from app.events.models import LifeOSEvent
+        get_event_bus().publish_sync(LifeOSEvent(
+            event_type="device.pairing_completed",
+            producer="device",
+            payload={
+                "challenge_id": challenge_id,
+                "peer_device_id": peer_device_id,
+                "device_name": peer_device_name,
+                "device_type": peer_device_type,
+            },
+        ))
+    except Exception:
+        pass
+
     return True

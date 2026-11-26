@@ -11,7 +11,7 @@ import hashlib
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -91,10 +91,45 @@ def initialize_sync_store(db_path: Path | str | None = None) -> None:
             )
         """)
 
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS processed_batches (
+                batch_id TEXT PRIMARY KEY,
+                peer_device_id TEXT NOT NULL,
+                processed_at TEXT NOT NULL
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sync_chunk_transfers (
+                transfer_id TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                total_chunks INTEGER NOT NULL,
+                payload_b64 TEXT NOT NULL,
+                chunk_sha256 TEXT NOT NULL,
+                total_sha256 TEXT,
+                peer_device_id TEXT,
+                direction TEXT NOT NULL DEFAULT 'import',
+                batch_id TEXT,
+                manifest_json TEXT,
+                items_count INTEGER DEFAULT 0,
+                downloaded INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (transfer_id, direction, chunk_index)
+            )
+        """)
+
+        chunk_cols = {
+            r["name"]
+            for r in conn.execute("PRAGMA table_info(sync_chunk_transfers)").fetchall()
+        }
+        if "downloaded" not in chunk_cols:
+            conn.execute("ALTER TABLE sync_chunk_transfers ADD COLUMN downloaded INTEGER NOT NULL DEFAULT 0")
+
         conn.execute("CREATE INDEX IF NOT EXISTS idx_change_entity ON sync_change_log(entity_type, entity_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_change_workspace ON sync_change_log(workspace_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_change_timestamp ON sync_change_log(timestamp)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_conflict_status ON sync_conflicts(status, workspace_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_chunk_transfer ON sync_chunk_transfers(transfer_id, direction)")
 
 
 def _compute_hash(data: Dict[str, Any]) -> str:
@@ -457,3 +492,195 @@ def list_sync_conflicts(
                 )
             )
         return conflicts
+
+
+def is_batch_processed(batch_id: str, db_path: Path | str | None = None) -> bool:
+    """Return True if batch_id has already been imported and committed."""
+    target_path = _get_db_path(db_path)
+    initialize_sync_store(target_path)
+    with connect_sqlite(target_path) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM processed_batches WHERE batch_id = ?",
+            (batch_id,),
+        ).fetchone()
+        return row is not None
+
+
+def mark_batch_processed(
+    batch_id: str,
+    peer_device_id: str,
+    db_path: Path | str | None = None,
+) -> None:
+    """Record a batch_id as processed for idempotent duplicate import protection."""
+    target_path = _get_db_path(db_path)
+    initialize_sync_store(target_path)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    with connect_sqlite(target_path) as conn:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO processed_batches (batch_id, peer_device_id, processed_at)
+            VALUES (?, ?, ?)
+            """,
+            (batch_id, peer_device_id, now_iso),
+        )
+
+
+def save_sync_chunk(
+    transfer_id: str,
+    chunk_index: int,
+    total_chunks: int,
+    payload_b64: str,
+    chunk_sha256: str,
+    total_sha256: str | None = None,
+    peer_device_id: str | None = None,
+    direction: str = "import",
+    batch_id: str | None = None,
+    manifest: dict[str, int] | None = None,
+    items_count: int = 0,
+    db_path: Path | str | None = None,
+) -> None:
+    """Persist a transfer chunk for staged reassembly or chunked download."""
+    target_path = _get_db_path(db_path)
+    initialize_sync_store(target_path)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    manifest_json = json.dumps(manifest) if manifest is not None else None
+    with connect_sqlite(target_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO sync_chunk_transfers (
+                transfer_id, chunk_index, total_chunks, payload_b64, chunk_sha256,
+                total_sha256, peer_device_id, direction, batch_id, manifest_json,
+                items_count, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(transfer_id, direction, chunk_index) DO UPDATE SET
+                total_chunks = excluded.total_chunks,
+                payload_b64 = excluded.payload_b64,
+                chunk_sha256 = excluded.chunk_sha256,
+                total_sha256 = COALESCE(excluded.total_sha256, sync_chunk_transfers.total_sha256),
+                peer_device_id = COALESCE(excluded.peer_device_id, sync_chunk_transfers.peer_device_id)
+            """,
+            (
+                transfer_id,
+                chunk_index,
+                total_chunks,
+                payload_b64,
+                chunk_sha256,
+                total_sha256,
+                peer_device_id,
+                direction,
+                batch_id,
+                manifest_json,
+                items_count,
+                now_iso,
+            ),
+        )
+
+
+def get_sync_chunks(
+    transfer_id: str,
+    direction: str = "import",
+    db_path: Path | str | None = None,
+) -> list[dict[str, Any]]:
+    """Retrieve all persisted chunks for a transfer ordered by chunk_index."""
+    target_path = _get_db_path(db_path)
+    initialize_sync_store(target_path)
+    with connect_sqlite(target_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM sync_chunk_transfers
+            WHERE transfer_id = ? AND direction = ?
+            ORDER BY chunk_index ASC
+            """,
+            (transfer_id, direction),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_sync_chunk(
+    transfer_id: str,
+    chunk_index: int,
+    direction: str = "export",
+    db_path: Path | str | None = None,
+) -> dict[str, Any] | None:
+    """Retrieve a single persisted chunk for a transfer."""
+    target_path = _get_db_path(db_path)
+    initialize_sync_store(target_path)
+    with connect_sqlite(target_path) as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM sync_chunk_transfers
+            WHERE transfer_id = ? AND direction = ? AND chunk_index = ?
+            """,
+            (transfer_id, direction, chunk_index),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def delete_sync_transfer(
+    transfer_id: str,
+    direction: str = "import",
+    db_path: Path | str | None = None,
+) -> None:
+    """Clean up staged chunks for a completed or aborted transfer."""
+    target_path = _get_db_path(db_path)
+    initialize_sync_store(target_path)
+    with connect_sqlite(target_path) as conn:
+        conn.execute(
+            "DELETE FROM sync_chunk_transfers WHERE transfer_id = ? AND direction = ?",
+            (transfer_id, direction),
+        )
+
+
+def mark_export_chunk_downloaded(
+    transfer_id: str,
+    chunk_index: int,
+    db_path: Path | str | None = None,
+) -> bool:
+    """
+    Mark an export chunk as downloaded. Once all chunks of the export transfer
+    have been downloaded, delete the staged export rows from sync_chunk_transfers.
+    Returns True if the transfer was cleaned up.
+    """
+    target_path = _get_db_path(db_path)
+    initialize_sync_store(target_path)
+    with connect_sqlite(target_path) as conn:
+        conn.execute(
+            """
+            UPDATE sync_chunk_transfers
+            SET downloaded = 1
+            WHERE transfer_id = ? AND direction = 'export' AND chunk_index = ?
+            """,
+            (transfer_id, chunk_index),
+        )
+        row = conn.execute(
+            """
+            SELECT MAX(total_chunks) AS expected_total,
+                   COUNT(CASE WHEN downloaded = 1 THEN 1 END) AS downloaded_count
+            FROM sync_chunk_transfers
+            WHERE transfer_id = ? AND direction = 'export'
+            """,
+            (transfer_id,),
+        ).fetchone()
+        if row and row["expected_total"] and int(row["downloaded_count"]) >= int(row["expected_total"]):
+            conn.execute(
+                "DELETE FROM sync_chunk_transfers WHERE transfer_id = ? AND direction = 'export'",
+                (transfer_id,),
+            )
+            return True
+    return False
+
+
+def prune_expired_sync_transfers(
+    max_age_seconds: int = 3600,
+    db_path: Path | str | None = None,
+) -> int:
+    """Remove stale staged chunk transfers older than max_age_seconds."""
+    target_path = _get_db_path(db_path)
+    initialize_sync_store(target_path)
+    cutoff_iso = (datetime.now(timezone.utc) - timedelta(seconds=max_age_seconds)).isoformat()
+    with connect_sqlite(target_path) as conn:
+        cur = conn.execute(
+            "DELETE FROM sync_chunk_transfers WHERE created_at < ?",
+            (cutoff_iso,),
+        )
+        return cur.rowcount

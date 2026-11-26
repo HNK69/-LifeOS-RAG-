@@ -1,15 +1,154 @@
 import React, { useEffect, useState } from "react";
 import { Header } from "./components/Header";
-import { EventLogStream } from "./components/EventLogStream";
 import { ConsentPrompt, DiscoveredSource } from "./components/ConsentPrompt";
 import { useLifeOS } from "./hooks/useLifeOS";
 import { useEventStream } from "./hooks/useEventStream";
+import { WorkspaceProfile } from "./api/types";
+import { QueryView } from "./views/QueryView";
+import { PrivacyView } from "./views/PrivacyView";
+import { SyncView } from "./views/SyncView";
+import { WorkspacesView } from "./views/WorkspacesView";
+import { DiagnosticsView } from "./views/DiagnosticsView";
 
-export const App: React.FC = () => {
+export type AppTab = "query" | "privacy" | "sync" | "workspaces" | "diagnostics";
+
+export interface AppProps {
+  initialTab?: AppTab;
+  initialWorkspaces?: WorkspaceProfile[];
+  initialActiveWorkspaceId?: string;
+  initialDiscovery?: DiscoveredSource | null;
+}
+
+export interface ErrorBoundaryProps {
+  viewName?: string;
+  onReset?: () => void;
+  children?: React.ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  errorMessage: string;
+}
+
+export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, errorMessage: "" };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return {
+      hasError: true,
+      errorMessage: error?.message || "An unexpected rendering error occurred.",
+    };
+  }
+
+  componentDidCatch(_error: Error, _errorInfo: React.ErrorInfo): void {
+    // Captured by boundary state for safe fallback rendering
+  }
+
+  handleReset = () => {
+    this.setState({ hasError: false, errorMessage: "" });
+    if (this.props.onReset) {
+      this.props.onReset();
+    }
+  };
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div
+          role="alert"
+          data-testid="view-error-boundary"
+          style={{
+            backgroundColor: "#fef2f2",
+            border: "1px solid #fecaca",
+            borderRadius: "8px",
+            padding: "20px",
+            color: "#991b1b",
+            display: "flex",
+            flexDirection: "column",
+            gap: "12px",
+            alignItems: "flex-start",
+          }}
+        >
+          <div style={{ fontSize: "15px", fontWeight: 700 }}>
+            {this.props.viewName ? `${this.props.viewName} encountered an error` : "View encountered an error"}
+          </div>
+          <div style={{ fontSize: "13px", color: "#7f1d1d" }}>{this.state.errorMessage}</div>
+          <button
+            type="button"
+            onClick={this.handleReset}
+            style={{
+              backgroundColor: "#dc2626",
+              color: "#ffffff",
+              border: "none",
+              borderRadius: "6px",
+              padding: "7px 14px",
+              fontSize: "12px",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Reset View
+          </button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+const NAV_TABS: Array<{ id: AppTab; label: string }> = [
+  { id: "query", label: "Query" },
+  { id: "privacy", label: "Privacy" },
+  { id: "sync", label: "Sync" },
+  { id: "workspaces", label: "Workspaces" },
+  { id: "diagnostics", label: "Diagnostics" },
+];
+
+export const App: React.FC<AppProps> = ({
+  initialTab = "query",
+  initialWorkspaces = [],
+  initialActiveWorkspaceId = "default",
+  initialDiscovery = null,
+}) => {
   const [baseUrl] = useState("http://127.0.0.1:8000");
-  const { client, sidecarState, health, readiness, error, refresh } = useLifeOS(baseUrl);
-  const { connectionState: sseState, events, clearEvents } = useEventStream(baseUrl);
-  const [activeDiscovery, setActiveDiscovery] = useState<DiscoveredSource | null>(null);
+  const {
+    client,
+    sidecarState,
+    health,
+    readiness,
+    error,
+    refresh,
+    baseUrl: activeBaseUrl,
+    authToken,
+  } = useLifeOS(baseUrl);
+  const { connectionState: sseState, events, clearEvents } = useEventStream(activeBaseUrl, authToken);
+  const [activeDiscovery, setActiveDiscovery] = useState<DiscoveredSource | null>(initialDiscovery);
+
+  const [activeTab, setActiveTab] = useState<AppTab>(initialTab);
+  const [workspaces, setWorkspaces] = useState<WorkspaceProfile[]>(initialWorkspaces);
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>(initialActiveWorkspaceId);
+
+  // Load workspaces for Header Workspace Switcher & views
+  useEffect(() => {
+    let mounted = true;
+    client
+      .listWorkspaces()
+      .then((list) => {
+        if (mounted && Array.isArray(list)) {
+          setWorkspaces(list);
+        }
+      })
+      .catch(() => {
+        // Backend may still be starting; views can refresh later
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [client]);
 
   // Detect incoming discovery events from real-time event stream
   useEffect(() => {
@@ -35,10 +174,54 @@ export const App: React.FC = () => {
         fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
       }}
     >
-      <Header sidecarState={sidecarState} sseState={sseState} />
+      <Header
+        sidecarState={sidecarState}
+        sseState={sseState}
+        workspaces={workspaces}
+        activeWorkspaceId={activeWorkspaceId}
+        onWorkspaceChange={setActiveWorkspaceId}
+      />
+
+      {/* Tab Navigation Bar */}
+      <nav
+        aria-label="Primary Navigation"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "6px",
+          padding: "8px 20px",
+          backgroundColor: "#ffffff",
+          borderBottom: "1px solid #e2e8f0",
+        }}
+      >
+        {NAV_TABS.map((tab) => {
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => setActiveTab(tab.id)}
+              style={{
+                backgroundColor: isActive ? "#2563eb" : "transparent",
+                color: isActive ? "#ffffff" : "#475569",
+                border: isActive ? "1px solid #2563eb" : "1px solid transparent",
+                borderRadius: "6px",
+                padding: "6px 14px",
+                fontSize: "13px",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+      </nav>
 
       <main style={{ flex: 1, padding: "20px", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        {/* Consent Prompt Banner (Top) */}
+        {/* Consent Prompt Banner (Top - preserved across all tabs) */}
         <ConsentPrompt
           client={client}
           discovery={activeDiscovery}
@@ -49,110 +232,55 @@ export const App: React.FC = () => {
           }}
         />
 
-        <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", overflow: "hidden" }}>
-          {/* Left: System & Sidecar Status */}
-        <section
-          style={{
-            backgroundColor: "#ffffff",
-            padding: "20px",
-            borderRadius: "8px",
-            border: "1px solid #e2e8f0",
-            display: "flex",
-            flexDirection: "column",
-            gap: "16px",
-            overflowY: "auto",
-          }}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h2 style={{ fontSize: "16px", fontWeight: 600, color: "#1e293b", margin: 0 }}>
-              Sidecar Lifecycle & Health
-            </h2>
-            <button
-              onClick={refresh}
-              style={{
-                backgroundColor: "#f1f5f9",
-                border: "1px solid #cbd5e1",
-                padding: "4px 10px",
-                borderRadius: "4px",
-                fontSize: "12px",
-                cursor: "pointer",
-              }}
-            >
-              Refresh
-            </button>
-          </div>
+        {activeTab === "query" && (
+          <ErrorBoundary key="query" viewName="Query & Intelligence">
+            <QueryView
+              client={client}
+              workspaces={workspaces}
+              activeWorkspaceId={activeWorkspaceId}
+              onWorkspaceChange={setActiveWorkspaceId}
+            />
+          </ErrorBoundary>
+        )}
 
-          {error && (
-            <div
-              style={{
-                backgroundColor: "#fef2f2",
-                color: "#991b1b",
-                border: "1px solid #fecaca",
-                padding: "10px 14px",
-                borderRadius: "6px",
-                fontSize: "13px",
-              }}
-            >
-              {error}
-            </div>
-          )}
+        {activeTab === "privacy" && (
+          <ErrorBoundary key="privacy" viewName="Privacy Dashboard">
+            <PrivacyView client={client} />
+          </ErrorBoundary>
+        )}
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", fontSize: "13px" }}>
-            <div style={{ padding: "12px", backgroundColor: "#f8fafc", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
-              <div style={{ color: "#64748b", marginBottom: "4px" }}>Backend Host</div>
-              <div style={{ fontWeight: 600 }}>{sidecarState.host}:{sidecarState.port}</div>
-            </div>
-            <div style={{ padding: "12px", backgroundColor: "#f8fafc", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
-              <div style={{ color: "#64748b", marginBottom: "4px" }}>Liveness Probe</div>
-              <div style={{ fontWeight: 600, color: (health?.status === "ok" || health?.status === "healthy") ? "#16a34a" : "#dc2626" }}>
-                {health?.status || "Unreachable"}
-              </div>
-            </div>
-            <div style={{ padding: "12px", backgroundColor: "#f8fafc", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
-              <div style={{ color: "#64748b", marginBottom: "4px" }}>Readiness State</div>
-              <div style={{ fontWeight: 600, color: readiness?.status === "ready" ? "#16a34a" : "#dc2626" }}>
-                {readiness?.status || "Unready"}
-              </div>
-            </div>
-            <div style={{ padding: "12px", backgroundColor: "#f8fafc", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
-              <div style={{ color: "#64748b", marginBottom: "4px" }}>Privacy Mode</div>
-              <div style={{ fontWeight: 600, color: "#0284c7" }}>Local-First (Strict)</div>
-            </div>
-          </div>
+        {activeTab === "sync" && (
+          <ErrorBoundary key="sync" viewName="Cross-Device Sync">
+            <SyncView client={client} events={events} activeWorkspaceId={activeWorkspaceId} />
+          </ErrorBoundary>
+        )}
 
-          {readiness?.databases && (
-            <div style={{ marginTop: "12px" }}>
-              <h3 style={{ fontSize: "14px", fontWeight: 600, color: "#334155", marginBottom: "8px" }}>
-                Verified Database Registries
-              </h3>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "8px", fontSize: "12px" }}>
-                {Object.entries(readiness.databases).map(([db, ok]) => (
-                  <div
-                    key={db}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "6px",
-                      padding: "6px 10px",
-                      borderRadius: "4px",
-                      backgroundColor: ok ? "#f0fdf4" : "#fef2f2",
-                      color: ok ? "#166534" : "#991b1b",
-                    }}
-                  >
-                    <span>{ok ? "✓" : "✗"}</span>
-                    <span>{db}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </section>
+        {activeTab === "workspaces" && (
+          <ErrorBoundary key="workspaces" viewName="Workspaces">
+            <WorkspacesView
+              client={client}
+              workspaces={workspaces}
+              activeWorkspaceId={activeWorkspaceId}
+              onSelectWorkspace={setActiveWorkspaceId}
+              onWorkspacesUpdated={setWorkspaces}
+            />
+          </ErrorBoundary>
+        )}
 
-        {/* Right: Real-time Event Stream */}
-        <section style={{ height: "100%", overflow: "hidden" }}>
-          <EventLogStream events={events} onClear={clearEvents} />
-        </section>
-        </div>
+        {activeTab === "diagnostics" && (
+          <ErrorBoundary key="diagnostics" viewName="Diagnostics">
+            <DiagnosticsView
+              client={client}
+              sidecarState={sidecarState}
+              health={health}
+              readiness={readiness}
+              connectionError={error}
+              onRefreshSidecar={refresh}
+              events={events}
+              onClearEvents={clearEvents}
+            />
+          </ErrorBoundary>
+        )}
       </main>
     </div>
   );

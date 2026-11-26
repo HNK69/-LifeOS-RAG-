@@ -69,10 +69,10 @@ async def process_query(
     active_workspace_id = body.workspace_id or ctx.workspace_id
     if body.workspace_id and body.workspace_id != ctx.workspace_id:
         from app.workspace.store import is_user_authorized_for_workspace
-        if not is_user_authorized_for_workspace(ctx.user, body.workspace_id):
+        if not is_user_authorized_for_workspace(ctx.user.user_id, body.workspace_id, is_admin=(ctx.user.role == "admin")):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"User '{ctx.user}' is not authorized to access workspace '{body.workspace_id}'",
+                detail=f"User '{ctx.user.user_id}' is not authorized to access workspace '{body.workspace_id}'",
             )
     active_session["workspace_id"] = active_workspace_id
 

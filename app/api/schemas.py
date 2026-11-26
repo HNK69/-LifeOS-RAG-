@@ -256,16 +256,22 @@ class PeerDeviceResponse(BaseModel):
 
 
 class PairingInitiateRequest(BaseModel):
-    peer_device_id: str
+    peer_device_id: str | None = "*"
     ttl_seconds: int = 300
 
 
 class PairingInitiateResponse(BaseModel):
     challenge_id: str
-    peer_device_id: str
+    peer_device_id: str = "*"
     challenge_code: str
     expires_at: str
-    created_at: str
+    created_at: str = ""
+    host: str = "127.0.0.1"
+    port: int = 8000
+    desktop_device_id: str = ""
+    signing_public_key: str = ""
+    exchange_public_key: str = ""
+    pairing_token: str | None = None
 
 
 class PairingVerifyRequest(BaseModel):
@@ -283,6 +289,7 @@ class PairingVerifyResponse(BaseModel):
     success: bool
     message: str
     device_id: str
+    device_token: str | None = None
 
 
 class SealEnvelopeRequest(BaseModel):
@@ -553,6 +560,46 @@ class PeerSyncStatusResponse(BaseModel):
     unresolved_conflicts: int = 0
 
 
+class SyncChunkRequest(BaseModel):
+    transfer_id: str = Field(..., min_length=1, max_length=128)
+    chunk_index: int = Field(..., ge=0)
+    total_chunks: int = Field(..., ge=1)
+    payload_b64: str = Field(..., min_length=1)
+    chunk_sha256: str = Field(..., min_length=64, max_length=64)
+    total_sha256: str | None = Field(default=None, min_length=64, max_length=64)
+    peer_device_id: str | None = None
+
+
+class SyncChunkResponse(BaseModel):
+    transfer_id: str
+    chunk_index: int
+    total_chunks: int
+    received_chunks: int
+    completed: bool = False
+    sha256_verified: bool = True
+    import_report: SyncImportResponse | None = None
+
+
+class SyncChunkedExportResponse(BaseModel):
+    transfer_id: str
+    batch_id: str
+    peer_device_id: str
+    total_bytes: int
+    total_chunks: int
+    total_sha256: str
+    items_count: int
+    manifest: dict[str, int]
+
+
+class SyncChunkDataResponse(BaseModel):
+    transfer_id: str
+    chunk_index: int
+    total_chunks: int
+    payload_b64: str
+    chunk_sha256: str
+    total_sha256: str
+
+
 # ============================================================
 # PLUGIN & SIDECAR EXTENSIBILITY SCHEMAS (Milestone 9)
 # ============================================================
@@ -605,4 +652,36 @@ class PluginActionResponse(BaseModel):
     plugin_id: str
     status: str
     message: str
+
+
+# ============================================================
+# DIAGNOSTICS & RESOURCE GOVERNOR SCHEMAS (Milestone C4)
+# ============================================================
+
+class DiagnosticCheckResponse(BaseModel):
+    name: str
+    category: str
+    status: str
+    message: str
+    details: dict[str, Any] | None = None
+    fix_hint: str | None = None
+
+
+class DiagnosticReportResponse(BaseModel):
+    checks: list[DiagnosticCheckResponse]
+    overall_status: str
+    total_checks: int
+    passed: int
+    warnings: int
+    failed: int
+    timestamp: str
+
+
+class GovernorMetricsResponse(BaseModel):
+    cpu_percent: float
+    ram_percent: float
+    on_battery: bool
+    battery_percent: float | None = None
+    should_pause_ingestion: bool
+    pause_reason: str | None = None
 

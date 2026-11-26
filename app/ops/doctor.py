@@ -37,6 +37,7 @@ class DiagnosticCheck:
     status: str  # "OK", "WARN", "FAIL"
     message: str
     remediation: str | None = None
+    details: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -82,6 +83,15 @@ def _check_sqlite_database(db_name: str, db_path: Path) -> DiagnosticCheck:
         )
 
     try:
+        if db_path.stat().st_size == 0:
+            return DiagnosticCheck(
+                name=db_name,
+                category="Database",
+                status="FAIL",
+                message="Database file is 0 bytes (empty/truncated)",
+                remediation="Re-initialize database store",
+            )
+
         conn = sqlite3.connect(str(db_path), timeout=3.0)
         try:
             # 1. Integrity check
@@ -213,8 +223,14 @@ def _check_vector_store(chroma_dir: Path) -> DiagnosticCheck:
             )
             collections = client.list_collections()
             count = len(collections)
-        except Exception:
-            count = 1 if chroma_dir.is_dir() else 0
+        except Exception as exc:
+            return DiagnosticCheck(
+                name="chroma_vectordb",
+                category="VectorDB",
+                status="FAIL",
+                message=f"ChromaDB connection failed: {exc}",
+                remediation="Inspect ChromaDB data directory or rebuild collections with 'lifeos admin reindex'",
+            )
 
         return DiagnosticCheck(
             name="chroma_vectordb",
@@ -227,8 +243,8 @@ def _check_vector_store(chroma_dir: Path) -> DiagnosticCheck:
             name="chroma_vectordb",
             category="VectorDB",
             status="FAIL",
-            message=f"ChromaDB connection error: {exc}",
-            remediation=f"Check Chroma directory permissions at {chroma_dir}.",
+            message=f"ChromaDB connection failed: {exc}",
+            remediation="Inspect ChromaDB data directory or rebuild collections with 'lifeos admin reindex'",
         )
 
 
@@ -252,17 +268,37 @@ def _check_config_hygiene() -> DiagnosticCheck:
         )
 
 
-def _check_port_availability(port: int) -> DiagnosticCheck:
-    """Verify that the API server port is available to bind."""
+def _check_port_availability(port: int, in_process: bool = False) -> DiagnosticCheck:
+    """Verify API server port state (free to bind out-of-process, or actively serving in-process)."""
+    if in_process:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1.0):
+                return DiagnosticCheck(
+                    name=f"port_{port}",
+                    category="Network",
+                    status="OK",
+                    message="API port actively serving traffic",
+                    details={"host": "127.0.0.1", "port": port, "in_process": True},
+                )
+        except OSError:
+            return DiagnosticCheck(
+                name=f"port_{port}",
+                category="Network",
+                status="WARN",
+                message=f"Port {port} is not accepting connections on 127.0.0.1",
+                remediation=f"Ensure LifeOS API server is actively listening on 127.0.0.1:{port}.",
+                details={"host": "127.0.0.1", "port": port, "in_process": True},
+            )
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         sock.bind(("127.0.0.1", port))
-        sock.close()
         return DiagnosticCheck(
             name=f"port_{port}",
             category="Network",
             status="OK",
             message=f"Port {port} is free and ready for binding",
+            details={"host": "127.0.0.1", "port": port, "in_process": False},
         )
     except OSError:
         return DiagnosticCheck(
@@ -271,13 +307,21 @@ def _check_port_availability(port: int) -> DiagnosticCheck:
             status="WARN",
             message=f"Port {port} is already bound or busy",
             remediation=f"Ensure no other LifeOS server is running, or set LIFEOS_API_PORT to another port.",
+            details={"host": "127.0.0.1", "port": port, "in_process": False},
         )
+    finally:
+        sock.close()
 
 
-def run_diagnostics(strict_mode: bool = False) -> DiagnosticReport:
+def run_diagnostics(
+    strict_mode: bool = False,
+    in_process: bool = False,
+    port_override: int | None = None,
+) -> DiagnosticReport:
     """
     Execute all pre-flight diagnostic checks and return a DiagnosticReport.
     In strict_mode, any warning or failure sets overall_status to FAILED.
+    When in_process=True, verifies the API port is actively serving rather than free to bind.
     """
     try:
         import config as cfg
@@ -323,8 +367,8 @@ def run_diagnostics(strict_mode: bool = False) -> DiagnosticReport:
     checks.append(_check_vector_store(chroma_path))
 
     # 6. Port Availability
-    api_port = getattr(cfg, "API_PORT", 8000)
-    checks.append(_check_port_availability(api_port))
+    api_port = port_override if port_override is not None and port_override > 0 else getattr(cfg, "API_PORT", 8000)
+    checks.append(_check_port_availability(api_port, in_process=in_process))
 
     # Calculate overall status
     has_fail = any(c.status == "FAIL" for c in checks)

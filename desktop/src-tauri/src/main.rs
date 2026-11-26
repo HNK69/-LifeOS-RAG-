@@ -39,6 +39,7 @@ fn main() {
     };
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(state)
         .invoke_handler(tauri::generate_handler![get_sidecar_status, stop_sidecar])
         .build(tauri::generate_context!())

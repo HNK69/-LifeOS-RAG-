@@ -579,3 +579,87 @@ def test_api_header_workspace_resolution_and_default_fallback(tmp_path: Path, mo
     assert resp_dave.status_code == 403
     err_text = resp_dave.json().get("detail") or resp_dave.json().get("error", {}).get("message", "")
     assert "Forbidden" in err_text or "not have access" in err_text
+
+
+def test_api_query_workspace_body_authorization_and_header(tmp_path: Path, monkeypatch):
+    """
+    Verifies POST /api/query workspace authorization when workspace_id is sent in the
+    request body (with or without X-Workspace-ID header), including admin bypass and
+    non-existent/unauthorized workspace rejection (403, never 500).
+    """
+    ws_db = tmp_path / "query_ws.db"
+    init_workspace_store(ws_db)
+
+    import config
+    monkeypatch.setattr(config, "WORKSPACE_DB", ws_db)
+    monkeypatch.setattr(config, "API_AUTH_ENABLED", True)
+    monkeypatch.setattr(config, "API_KEY", "test-user-key")
+    monkeypatch.setattr(config, "API_ADMIN_KEY", "test-admin-key")
+    import app.workspace.store as store_mod
+    monkeypatch.setattr(store_mod, "WORKSPACE_DB", ws_db)
+
+    create_workspace(name="Charlie Query Space", workspace_id="ws_charlie_q", owner_id="charlie", db_path=ws_db)
+
+    from app import main
+    captured_sessions = []
+
+    def fake_handle_query(query: str, session=None):
+        if session is not None:
+            captured_sessions.append(dict(session))
+            session["last_result"] = type("Result", (), {"answer_type": "rag", "data": []})()
+        return f"Answered: {query}"
+
+    monkeypatch.setattr(main, "handle_query", fake_handle_query)
+
+    app = create_app()
+    client = TestClient(app)
+
+    # 1. Authorized owner querying via body workspace_id WITHOUT X-Workspace-ID header -> 200 OK
+    res_charlie = client.post(
+        "/api/query",
+        headers={"Authorization": "Bearer test-user-key", "X-User-ID": "charlie"},
+        json={"query": "hello workspace", "session_id": "s-charlie", "workspace_id": "ws_charlie_q"},
+    )
+    assert res_charlie.status_code == 200
+    assert res_charlie.json()["answer"] == "Answered: hello workspace"
+    assert captured_sessions[-1]["workspace_id"] == "ws_charlie_q"
+
+    # 2. Unauthorized user querying via body workspace_id WITHOUT X-Workspace-ID header -> 403 Forbidden
+    res_dave = client.post(
+        "/api/query",
+        headers={"Authorization": "Bearer test-user-key", "X-User-ID": "dave"},
+        json={"query": "sneaky query", "session_id": "s-dave", "workspace_id": "ws_charlie_q"},
+    )
+    assert res_dave.status_code == 403
+
+    # 3. Non-existent workspace_id in body (non-admin) -> 403 Forbidden (not 500)
+    res_missing = client.post(
+        "/api/query",
+        headers={"Authorization": "Bearer test-user-key", "X-User-ID": "dave"},
+        json={"query": "missing ws", "session_id": "s-missing", "workspace_id": "ws_nonexistent_999"},
+    )
+    assert res_missing.status_code == 403
+
+    # 4. Admin querying via body workspace_id WITHOUT X-Workspace-ID header -> 200 OK
+    res_admin = client.post(
+        "/api/query",
+        headers={"Authorization": "Bearer test-admin-key", "X-User-ID": "admin"},
+        json={"query": "admin check", "session_id": "s-admin", "workspace_id": "ws_charlie_q"},
+    )
+    assert res_admin.status_code == 200
+
+    # 5. Authorized owner querying WITH X-Workspace-ID header -> 200 OK
+    res_hdr = client.post(
+        "/api/query",
+        headers={"Authorization": "Bearer test-user-key", "X-User-ID": "charlie", "X-Workspace-ID": "ws_charlie_q"},
+        json={"query": "header check", "session_id": "s-hdr", "workspace_id": "ws_charlie_q"},
+    )
+    assert res_hdr.status_code == 200
+
+    # 6. Unauthorized user WITH X-Workspace-ID header -> 403 Forbidden
+    res_hdr_unauth = client.post(
+        "/api/query",
+        headers={"Authorization": "Bearer test-user-key", "X-User-ID": "dave", "X-Workspace-ID": "ws_charlie_q"},
+        json={"query": "header unauth", "session_id": "s-hdr2", "workspace_id": "ws_charlie_q"},
+    )
+    assert res_hdr_unauth.status_code == 403

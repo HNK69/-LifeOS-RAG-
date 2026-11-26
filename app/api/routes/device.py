@@ -10,9 +10,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 
-from app.api.auth import AuthenticatedUser
+from app.api.auth import AuthenticatedUser, _extract_token, verify_token
 from app.api.dependencies import require_auth
 from app.api.schemas import (
     CryptographicEnvelopeSchema,
@@ -33,6 +33,7 @@ from app.security.device_store import (
     list_trusted_devices,
     revoke_trusted_device,
     verify_pairing_challenge,
+    verify_pairing_token,
 )
 from app.security.envelope import (
     CryptographicEnvelope,
@@ -119,20 +120,77 @@ def revoke_peer(
 
 
 @router.post(
+    "/peers/{device_id}/wipe",
+    summary="Request Remote Wipe for Trusted Peer Device",
+    description="Revokes trust and dispatches a privacy.remote_wipe directive for a paired mobile companion.",
+)
+def request_peer_remote_wipe(
+    device_id: str,
+    user: AuthenticatedUser = Depends(require_auth),
+):
+    peer = get_trusted_device(device_id)
+    if not peer:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Peer device '{device_id}' not found.",
+        )
+    revoked = revoke_trusted_device(device_id)
+    try:
+        from app.events.bus import get_event_bus
+        from app.events.models import LifeOSEvent
+        get_event_bus().publish_sync(LifeOSEvent(
+            event_type="privacy.remote_wipe",
+            producer="device",
+            payload={"device_id": device_id, "actor": user.user_id, "wipe_scope": "all"},
+        ))
+    except Exception:
+        pass
+    return {"wiped": True, "revoked": revoked, "device_id": device_id, "status": "revoked"}
+
+
+@router.post(
     "/pairing/initiate",
     response_model=PairingInitiateResponse,
     summary="Initiate Device Pairing",
-    description="Generates an ephemeral 6-digit cryptographic pairing challenge for a new peer.",
+    description="Generates an ephemeral 6-digit cryptographic pairing challenge and QR metadata for a new peer.",
 )
 def initiate_pairing(
-    req: PairingInitiateRequest,
+    request: Request,
+    req: PairingInitiateRequest | None = None,
     user: AuthenticatedUser = Depends(require_auth),
 ):
+    effective_req = req or PairingInitiateRequest()
     challenge = create_pairing_challenge(
-        peer_device_id=req.peer_device_id,
-        ttl_seconds=req.ttl_seconds,
+        peer_device_id=effective_req.peer_device_id or "*",
+        ttl_seconds=effective_req.ttl_seconds,
     )
-    return PairingInitiateResponse(**challenge)
+    device = get_device_identity()
+    try:
+        import config as cfg
+    except ImportError:
+        from app import config as cfg
+    default_host = getattr(cfg, "API_HOST", "127.0.0.1")
+    default_port = int(getattr(cfg, "API_PORT", 8000))
+    req_host = (
+        request.url.hostname
+        if request.url.hostname and request.url.hostname != "testserver"
+        else default_host
+    )
+    req_port = int(request.url.port) if request.url.port else default_port
+
+    return PairingInitiateResponse(
+        challenge_id=challenge["challenge_id"],
+        peer_device_id=challenge["peer_device_id"],
+        challenge_code=challenge["challenge_code"],
+        expires_at=challenge["expires_at"],
+        created_at=challenge["created_at"],
+        host=req_host,
+        port=req_port,
+        desktop_device_id=device.device_id,
+        signing_public_key=device.signing_public_key_b64,
+        exchange_public_key=device.exchange_public_key_b64,
+        pairing_token=challenge.get("pairing_token"),
+    )
 
 
 @router.post(
@@ -143,27 +201,51 @@ def initiate_pairing(
 )
 def verify_pairing(
     req: PairingVerifyRequest,
-    user: AuthenticatedUser = Depends(require_auth),
+    authorization: str | None = Header(None, alias="Authorization"),
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
 ):
-    success = verify_pairing_challenge(
-        challenge_id=req.challenge_id,
-        challenge_code=req.challenge_code,
-        peer_device_id=req.peer_device_id,
-        peer_device_name=req.peer_device_name,
-        peer_device_type=req.peer_device_type,
-        peer_signing_pub_b64=req.peer_signing_public_key,
-        peer_exchange_pub_b64=req.peer_exchange_public_key,
-        signature_b64=req.signature,
-    )
+    try:
+        import config as cfg
+    except ImportError:
+        from app import config as cfg
+
+    if getattr(cfg, "API_AUTH_ENABLED", True):
+        token = _extract_token(authorization=authorization, x_api_key=x_api_key)
+        auth_user = verify_token(token) if token else None
+        if not auth_user and not (token and verify_pairing_token(req.challenge_id, token)):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required: valid API key or active pairing token.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+    try:
+        success = verify_pairing_challenge(
+            challenge_id=req.challenge_id,
+            challenge_code=req.challenge_code,
+            peer_device_id=req.peer_device_id,
+            peer_device_name=req.peer_device_name,
+            peer_device_type=req.peer_device_type,
+            peer_signing_pub_b64=req.peer_signing_public_key,
+            peer_exchange_pub_b64=req.peer_exchange_public_key,
+            signature_b64=req.signature,
+        )
+    except ValueError as ve:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(ve),
+        )
     if not success:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Pairing verification failed: invalid code, expired challenge, or cryptographic signature mismatch.",
         )
+    peer = get_trusted_device(req.peer_device_id)
     return PairingVerifyResponse(
         success=True,
         message="Device successfully verified and registered in trusted peer store.",
         device_id=req.peer_device_id,
+        device_token=peer.get("device_token") if peer else None,
     )
 
 

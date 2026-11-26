@@ -847,5 +847,125 @@ Milestone C2 implements intelligent host resource governance and consent-first s
 | `LIFEOS_DISCOVERY_ENABLED` | `true` | Boolean | Enable automatic folder discovery daemon |
 | `LIFEOS_DISCOVERY_INTERVAL_SECONDS` | `60.0` | Float $\ge 1.0$ | Discovery daemon candidate scan interval |
 
+---
+
+## 17. Desktop Packaging, Auto-Update & Diagnostics Center (Milestone C4)
+
+### Diagnostics Center API & UI
+- **Backend Endpoints** (`app/api/routes/diagnostics.py`, authenticated via `require_auth`):
+  - `GET /api/diagnostics?strict=false`: Executes `run_diagnostics(strict_mode=strict, in_process=True)` across Config, Database (8 SQLite DBs), Filesystem, Security (`device_identity`), VectorDB (`chroma_vectordb`), and Network (`port_<API_PORT>` actively serving traffic). Returns `DiagnosticReportResponse` with `passed`, `warnings`, `failed`, `overall_status` (`HEALTHY`, `DEGRADED`, `FAILED`), and `fix_hint` remediation strings.
+  - `GET /api/diagnostics/governor`: Samples `HardwareGovernor` (`app/ops/governor.py`) and returns `GovernorMetricsResponse` (`cpu_percent`, `ram_percent`, `on_battery`, `battery_percent`, `should_pause_ingestion`, `pause_reason`).
+- **Desktop UI (`desktop/src/views/DiagnosticsView.tsx`)**:
+  - Displays Sidecar Lifecycle & Connection (`host`, `port`, bearer token status, PID, `/health`, `/ready`), Doctor Checks grouped by category with strict-mode toggle and fix hints, Resource Governor telemetry, Auto-Update status, and the real-time `EventLogStream`.
+  - When running inside the Tauri shell (`window.__TAURI_INTERNALS__`), `desktop/src/hooks/useLifeOS.ts` invokes `get_sidecar_status` to hydrate the dynamic loopback port and ephemeral session token into `LifeOSWebClient` and `LifeOSEventClient`.
+
+### Tauri Packaging & Auto-Updater Infrastructure
+- **Tauri Config (`desktop/src-tauri/tauri.conf.json`)**:
+  - Strict loopback CSP: `default-src 'self' 'unsafe-inline' http://127.0.0.1:* ws://127.0.0.1:*`.
+  - `bundle.createUpdaterArtifacts: true` and valid icon assets under `desktop/src-tauri/icons/` (`32x32.png`, `128x128.png`, `128x128@2x.png`, `icon.ico`, `icon.icns`).
+  - `plugins.updater` configured with HTTPS endpoint (`https://releases.lifeos.local/updates/{{target}}/{{current_version}}`) and non-empty Minisign/Ed25519 `pubkey`.
+  - `desktop/src-tauri/Cargo.toml` includes `tauri-plugin-updater = "2.0.0"` and `desktop/src-tauri/capabilities/default.json` grants `core:default`, `updater:default`, `updater:allow-check`, and `updater:allow-download-and-install`.
+
+### Packaging Validation & Artifact Signing (`scripts/package_desktop.py`)
+```bash
+# Validate Tauri configuration, CSP, icons, capabilities, and updater pubkey
+python scripts/package_desktop.py validate
+
+# Generate an ephemeral Minisign/Ed25519 signing keypair (for CI release signing)
+python scripts/package_desktop.py keygen
+
+# Sign a release artifact and verify signature
+python scripts/package_desktop.py sign path/to/LifeOS_1.0.0_x64_en-US.msi --private-key "<B64_PRIV>"
+python scripts/package_desktop.py verify path/to/LifeOS_1.0.0_x64_en-US.msi --signature "<SIG>" --public-key "<B64_PUB>"
+```
+
+### Native Binary Compilation Note (Requires Rust Toolchain)
+Building native `.exe` / `.msi` installers and executing live Tauri updater binary self-replacement requires `rustc` and `cargo` (and platform-native Tauri prerequisites such as WiX/NSIS on Windows). On hosts without Rust installed, native compilation is skipped and must be run on a Rust-equipped build host:
+```bash
+cd desktop
+npm ci
+npm run build
+npx tauri build
+```
+
+---
+
+## 18. Mobile Companion Client, QR Pairing & Encrypted Sync (Milestone C5)
+
+### Architecture Overview
+Milestone C5 implements a **Two-Layer Companion Architecture** consisting of an offline-first encrypted mobile companion client (`app/client/mobile_companion.py`, `app/client/mobile_store.py`), hardened backend pairing and chunked sync endpoints, and a pure-TypeScript SVG QR pairing modal in the desktop shell (`desktop/src/components/QrPairingModal.tsx`, `desktop/src/views/SyncView.tsx`).
+
+```
++-------------------------------------------------------------------------------+
+|                      Desktop Host (Tauri / Web UI + FastAPI)                  |
+|                                                                               |
+|  SyncView.tsx ("Pair Mobile Device (QR)" & "Revoke Trust")                    |
+|    └──► QrPairingModal.tsx (Pure-TS ISO/IEC 18004 SVG QR + 300s TTL Timer)    |
+|           └──► POST /api/device/pairing/initiate                              |
+|                  (6-digit code, single-use pairing_token, Ed25519/X25519 pubs)|
++---------------------------------------│---------------------------------------+
+                                        │ QR Scan (Code + Ephemeral Token)
+                                        ▼
++-------------------------------------------------------------------------------+
+|               Mobile Companion Client (app/client/mobile_companion.py)        |
+|                                                                               |
+|  - Independent DeviceIdentity (device_type="mobile", mobile_device_keys.json) |
+|  - MobileCompanionStore (mobile_companion.db, PBKDF2-AES256GCM at-rest cache) |
+|  - Offline Outbox (exponential backoff retry + vector clock causality)        |
+|  - Chunked Transfer Manager (>10 MB SHA-256 verified upload/download resume)  |
+|  - Remote Wipe Handler (zeroizes mobile_companion.db + key material)          |
+|  - Platform Adapters: AndroidLifecycleManager & iOSLifecycleManager           |
++-------------------------------------------------------------------------------+
+```
+
+### QR Pairing Protocol (`/api/device/pairing/*`)
+1. **Challenge Initiation (`POST /api/device/pairing/initiate`)**:
+   - Accepts optional `peer_device_id` (defaults to `"*"` for open QR scan) and `ttl_seconds` (default `300`).
+   - Returns `challenge_id`, 6-digit `challenge_code`, `expires_at`, host/port, desktop `device_id`, `signing_public_key`, `exchange_public_key`, and a single-use `pairing_token` (`pair_*`). The host's master `API_KEY` is never embedded in the QR code.
+2. **QR Encoding (`desktop/src/components/QrPairingModal.tsx`)**:
+   - Deterministic, zero-dependency pure-TypeScript ISO/IEC 18004 QR encoder (Versions 1–20, Error Correction Level L, GF(256) Reed-Solomon, mask penalty optimization) rendering crisp inline `<svg>`.
+   - Displays the 6-digit manual code, live 300-second TTL progress bar, and listens for `device.pairing_completed` via SSE or `/api/device/peers` polling.
+3. **Challenge Verification (`POST /api/device/pairing/verify`)**:
+   - Validates either a standard `API_KEY` or the single-use `pairing_token` bound to `challenge_id`.
+   - Enforces non-wildcard `peer_device_id` binding when specified, rejects desktop self-impersonation (`peer_device_id == desktop.device_id`), rejects re-pairing `revoked` devices, rejects key hijacking against already-paired peer IDs, checks TTL expiration, constant-time `challenge_code` match, single-use replay prevention (`status = 'verified'`), and Ed25519 signature verification over `"{challenge_id}:{challenge_code}"`.
+   - Pins the mobile peer in `trusted_devices` (`trust_status = 'paired'`), issues a revocable device-scoped token (`devtok_*`) returned in `PairingVerifyResponse.device_token` (persisted encrypted in `mobile_companion.db` and sent via `X-Device-Token` for subsequent `/api/sync/*` requests without exposing master `API_KEY`), and emits `device.pairing_completed`.
+
+### Encrypted Sync, Consent, Idempotency & Chunked Transfers (`/api/sync/*`)
+- **Idempotent Batch Deduplication**: `sync.db` tracks `processed_batches(batch_id PRIMARY KEY, peer_device_id, processed_at)`. Re-importing the same `batch_id` returns an idempotent no-op (`items_imported=0, items_skipped=len(items)`).
+- **Real-Time Consent Enforcement**: `SyncEngine` evaluates `is_consent_granted()` on `DOCUMENT_META` and `DOCUMENT_CHUNK` items during both export and import, skipping documents whose consent is missing or revoked.
+- **Workspace Air-Gapping**: `local_only` and `confidential` workspaces are excluded from export and rejected/skipped on import.
+- **Chunked & Resumable Transfer (>10 MB)**: Because `RequestSizeLimiterMiddleware` enforces `API_MAX_REQUEST_BYTES` (`10 MB`), packages exceeding threshold split into SHA-256 verified chunks persisted in `sync_chunk_transfers`:
+  - `POST /api/sync/export/chunked` & `GET /api/sync/export/chunked/{transfer_id}/{chunk_index}`
+  - `POST /api/sync/import/chunked` & `GET /api/sync/import/chunked/{transfer_id}` (returns `received_indices` for interrupted transfer resume)
+- **Peer Revocation & Remote Wipe**: `DELETE /api/device/peers/{device_id}` and `POST /api/device/peers/{device_id}/wipe` revoke trust, emit `device.revoked` / `privacy.remote_wipe`, reject all subsequent sync operations (`HTTP 403`), and trigger `MobileCompanionClient.handle_remote_wipe()` to zeroize `mobile_companion.db`, `.vault.key`, and `mobile_device_keys.json`.
+
+### Verification Scope & Unverified Physical Device Notice (R4)
+- **Verified Automatically**:
+  - `tests/test_milestone_c5_mobile_companion.py`: Deterministic unit and integration tests against isolated `tmp_path` SQLite databases, generated Ed25519/X25519 identities, and live FastAPI `TestClient` covering QR pairing failure modes, revoked peer rejection, envelope tampering, duplicate batch idempotency, concurrent LWW & manual conflict resolution, offline exponential backoff, `local_only` workspace isolation, consent revocation, remote wipe zeroization, >10 MB chunked resume, and simulated `AndroidLifecycleManager` / `iOSLifecycleManager` constraints.
+  - `desktop/tests/qr_pairing.test.ts`: Vitest suite covering the pure-TS QR encoder, `QrPairingModal`, TTL countdown, `SyncView` pairing/revoke UI, and typed SDK methods.
+- **Explicitly Unverified in Current Environment**:
+  - **Physical Android / iOS Emulators & Hardware Camera Scanning**: No Android SDK (`adb`/Gradle), iOS Simulator/Xcode, or physical mobile camera scanner is installed on this Windows host. Live OS background schedulers (`WorkManager`, `BGAppRefreshTask`) and real-device camera QR decoding are unverified outside deterministic Python simulation adapters.
+
+### Manual Physical-Device Validation Steps
+1. **Start Host Server on LAN** (sidecar mode strictly binds `127.0.0.1` only; LAN mobile pairing requires explicit host configuration):
+   ```bash
+   set LIFEOS_API_TRUSTED_HOSTS=localhost,127.0.0.1,<HOST_LAN_IP>
+   set LIFEOS_API_KEY=<STRONG_SESSION_KEY>
+   .\.venv\Scripts\python.exe -m app.cli serve --host <HOST_LAN_IP> --port 8000
+   ```
+2. **Launch Desktop UI & Generate QR**:
+   - Open the **Sync** tab in LifeOS Desktop and click **Pair Mobile Device (QR)**.
+   - Confirm the SVG QR code renders alongside the 6-digit code and 300s countdown bar.
+3. **Physical Camera Scan & Pairing**:
+   - Scan the QR SVG with a physical Android/iOS camera or companion scanner app to extract the JSON `QrPairingPayload`.
+   - Confirm the 6-digit code matches, submit `/api/device/pairing/verify` over LAN, and verify the desktop modal transitions to **Mobile Device Paired Successfully** within 3 seconds.
+   - Test negative cases: scan an expired QR (>300s), enter a wrong 6-digit code, and re-scan an already-used QR (replay) — all must fail with HTTP 400.
+4. **Encrypted Sync & >10 MB Chunked Resume**:
+   - Trigger an encrypted sync while toggling device airplane mode and Wi-Fi/Cellular switches; confirm queued items flush on reconnect and large (>10 MB) transfers resume cleanly after mid-transfer interruption.
+5. **Revocation & Remote Wipe**:
+   - Click **Revoke Trust** next to the mobile device in `SyncView`, verify `trust_status` updates to **Revoked**, and confirm subsequent sync attempts from the physical mobile device fail with HTTP 403 and wipe local mobile storage.
+
+
+
 
 
