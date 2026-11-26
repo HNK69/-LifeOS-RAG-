@@ -3,7 +3,7 @@
 
 mod sidecar;
 
-use sidecar::{SidecarInfo, SidecarManager};
+use sidecar::{resolve_sidecar_config, SidecarInfo, SidecarManager};
 use std::sync::Mutex;
 use tauri::{Manager, RunEvent};
 
@@ -26,9 +26,13 @@ fn stop_sidecar(state: tauri::State<AppState>) -> Result<(), String> {
 fn main() {
     let sidecar_mgr = SidecarManager::new();
 
-    // Start sidecar using system python
-    let python_bin = if cfg!(windows) { "python" } else { "python3" };
-    if let Err(e) = sidecar_mgr.start(python_bin) {
+    // Start sidecar using resolved Python runtime and working directory
+    let config = resolve_sidecar_config(None);
+    println!(
+        "Resolved sidecar config: python={:?}, cwd={:?}",
+        config.python_path, config.working_dir
+    );
+    if let Err(e) = sidecar_mgr.start_with_config(&config) {
         eprintln!("Warning: Failed to start sidecar automatically: {}", e);
     } else {
         let _ = sidecar_mgr.wait_for_ready(10);

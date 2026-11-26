@@ -97,7 +97,8 @@ export class LifeOSWebClient {
     path: string,
     body?: unknown,
     params?: Record<string, string | number | boolean | undefined>,
-    extraHeaders?: Record<string, string>
+    extraHeaders?: Record<string, string>,
+    timeoutOverrideMs?: number
   ): Promise<T> {
     let url = `${this.baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
     if (params) {
@@ -113,8 +114,9 @@ export class LifeOSWebClient {
       }
     }
 
+    const effectiveTimeout = timeoutOverrideMs ?? this.timeoutMs;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timer = setTimeout(() => controller.abort(), effectiveTimeout);
 
     try {
       const response = await fetch(url, {
@@ -195,11 +197,11 @@ export class LifeOSWebClient {
   }
 
   // Query & Intelligence
-  public async query(req: QueryRequest): Promise<QueryResponse> {
+  public async query(req: QueryRequest, timeoutOverrideMs: number = 30000): Promise<QueryResponse> {
     const headers: Record<string, string> | undefined = req.workspace_id
       ? { "X-Workspace-ID": req.workspace_id }
       : undefined;
-    return this.request<QueryResponse>("POST", "/api/query", req, undefined, headers);
+    return this.request<QueryResponse>("POST", "/api/query", req, undefined, headers, timeoutOverrideMs);
   }
 
   // Privacy & Consent
