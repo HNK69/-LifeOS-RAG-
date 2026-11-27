@@ -20,13 +20,14 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
-from reasoning.engine import reason
+# Ensure both app directory and repo root are in sys.path
+_app_dir = Path(__file__).resolve().parent
+_root_dir = _app_dir.parent
+for _p in [str(_app_dir), str(_root_dir)]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
-if __package__ is None:
-    sys.path.insert(
-        0,
-        str(Path(__file__).resolve().parent.parent)
-    )
+from reasoning.engine import reason
     
 
 from intelligence.router import route_intelligent

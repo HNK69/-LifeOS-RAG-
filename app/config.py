@@ -384,7 +384,15 @@ API_MAX_QUERY_LENGTH = _get_env_int("LIFEOS_API_MAX_QUERY_LENGTH", 4096, min_val
 # CORS and Network
 API_CORS_ORIGINS = _get_env_list(
     "LIFEOS_API_CORS_ORIGINS",
-    ["http://localhost:3000", "http://127.0.0.1:3000"],
+    [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://tauri.localhost",
+        "https://tauri.localhost",
+        "tauri://localhost",
+        "http://localhost:1420",
+        "http://127.0.0.1:1420",
+    ],
 )
 API_ALLOWED_METHODS = _get_env_list(
     "LIFEOS_API_ALLOWED_METHODS",
